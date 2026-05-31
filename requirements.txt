@@ -1,0 +1,26 @@
+# ─── Apex Algo — Python dependencies ───────────────────────
+# Core runtime
+python-dotenv>=1.0.1
+loguru>=0.7.2
+pydantic>=2.7.0
+
+# Market data / indicators
+pandas>=2.2.0
+numpy>=1.26.0
+
+# IG Markets API (REST + Lightstreamer)
+trading-ig>=0.0.22
+requests>=2.32.0
+
+# Claude API
+anthropic>=0.40.0
+
+# State server consumed by the dashboard
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+
+# ─── Dev / test ────────────────────────────────────────────
+pytest>=8.2.0
+pytest-asyncio>=0.23.0
+ruff>=0.5.0
+mypy>=1.10.0
