@@ -144,6 +144,16 @@ class HeartbeatParams:
 # ──────────────────────────────────────────────────────────────────────────
 #  Top-level settings (environment-driven)
 # ──────────────────────────────────────────────────────────────────────────
+def _env_str(key: str, default: str = "") -> str:
+    """Read an env var, stripping surrounding whitespace.
+
+    Guards against the classic ``set VAR=DEMO && ...`` batch-file gotcha where a
+    trailing space leaks into the value (e.g. ``'DEMO '``).
+    """
+    raw = os.getenv(key)
+    return raw.strip() if raw is not None else default
+
+
 def _env_bool(key: str, default: bool) -> bool:
     raw = os.getenv(key)
     if raw is None:
@@ -155,25 +165,25 @@ def _env_bool(key: str, default: bool) -> bool:
 class Settings:
     # IG
     ig_acc_type: AccountType = field(
-        default_factory=lambda: AccountType(os.getenv("IG_ACC_TYPE", "DEMO").upper())
+        default_factory=lambda: AccountType(_env_str("IG_ACC_TYPE", "DEMO").upper())
     )
-    ig_username: str = field(default_factory=lambda: os.getenv("IG_USERNAME", ""))
+    ig_username: str = field(default_factory=lambda: _env_str("IG_USERNAME"))
     ig_password: str = field(default_factory=lambda: os.getenv("IG_PASSWORD", ""))
-    ig_api_key: str = field(default_factory=lambda: os.getenv("IG_API_KEY", ""))
-    ig_account_id: str = field(default_factory=lambda: os.getenv("IG_ACCOUNT_ID", ""))
+    ig_api_key: str = field(default_factory=lambda: _env_str("IG_API_KEY"))
+    ig_account_id: str = field(default_factory=lambda: _env_str("IG_ACCOUNT_ID"))
 
     # Claude
-    anthropic_api_key: str = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", ""))
-    claude_model: str = field(default_factory=lambda: os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6"))
+    anthropic_api_key: str = field(default_factory=lambda: _env_str("ANTHROPIC_API_KEY"))
+    claude_model: str = field(default_factory=lambda: _env_str("CLAUDE_MODEL", "claude-sonnet-4-6"))
 
     # State server
-    state_host: str = field(default_factory=lambda: os.getenv("STATE_SERVER_HOST", "0.0.0.0"))
-    state_port: int = field(default_factory=lambda: int(os.getenv("STATE_SERVER_PORT", "8080")))
-    vps_secret: str = field(default_factory=lambda: os.getenv("VPS_SECRET", "change-me"))
+    state_host: str = field(default_factory=lambda: _env_str("STATE_SERVER_HOST", "0.0.0.0"))
+    state_port: int = field(default_factory=lambda: int(_env_str("STATE_SERVER_PORT", "8080")))
+    vps_secret: str = field(default_factory=lambda: _env_str("VPS_SECRET", "change-me"))
 
     # Toggles
     trading_enabled: bool = field(default_factory=lambda: _env_bool("TRADING_ENABLED", True))
-    log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO").upper())
+    log_level: str = field(default_factory=lambda: _env_str("LOG_LEVEL", "INFO").upper())
 
     # Sub-configs
     risk: RiskParams = field(default_factory=RiskParams)
