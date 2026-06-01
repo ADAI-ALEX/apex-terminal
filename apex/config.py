@@ -294,6 +294,9 @@ class Settings:
 
     # Toggles
     trading_enabled: bool = field(default_factory=lambda: _cfg_bool("TRADING_ENABLED", "risk", "trading_enabled", True))
+    # Master AI brain switch. When False, NO Claude calls are ever made (agents return
+    # safe NO_TRADE defaults). Lets the user run a pure-Python, zero-AI-cost system.
+    ai_enabled: bool = field(default_factory=lambda: _cfg_bool("AI_ENABLED", "anthropic", "enabled", True))
     log_level: str = field(default_factory=lambda: _cfg_str("LOG_LEVEL", "_", "_", "INFO").upper())
 
     # Sub-configs — risk/prop are resolved from risk_profile in __post_init__.

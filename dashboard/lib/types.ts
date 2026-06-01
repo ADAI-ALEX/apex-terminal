@@ -74,6 +74,17 @@ export interface AlgoState {
     reason: string;
   };
   broker_error?: string;
+  ai_enabled?: boolean;
+  claude_usage?: {
+    calls: number;
+    input_tokens: number;
+    output_tokens: number;
+    est_cost_usd: number;
+  };
+  candles?: Record<
+    string,
+    { time: number; open: number; high: number; low: number; close: number }[]
+  >;
   portfolio_health: number;
   api_calls: Record<string, number>;
   last_heartbeat: string;

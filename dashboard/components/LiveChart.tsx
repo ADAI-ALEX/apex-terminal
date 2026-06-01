@@ -3,29 +3,31 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AlgoState } from "@/lib/types";
 
-type SeriesBag = {
-  price: any;
-  ema9: any;
-  ema21: any;
-  ema55: any;
-};
+type ChartMode = "candles" | "line";
 
 /**
- * Rolling real-time chart. The state stream carries indicator snapshots (not full
- * candle history), so we accumulate a line of the latest price + EMAs per tick.
- * Uses TradingView Lightweight Charts v4 (chart.addLineSeries).
+ * Live chart driven by the OHLC candle history the engine publishes in
+ * `state.candles`. Supports candlestick / line view, instrument switching, and
+ * fullscreen. Uses TradingView Lightweight Charts v4.
  */
 export function LiveChart({ state }: { state: AlgoState }) {
-  const markets = useMemo(() => Object.keys(state.indicators), [state.indicators]);
-  const [selected, setSelected] = useState<string>(markets[0] ?? "");
+  const markets = useMemo(() => {
+    const fromCandles = Object.keys(state.candles ?? {});
+    return fromCandles.length ? fromCandles : Object.keys(state.indicators ?? {});
+  }, [state.candles, state.indicators]);
 
+  const [selected, setSelected] = useState<string>("");
+  const [mode, setMode] = useState<ChartMode>("candles");
+
+  const wrapRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
-  const seriesRef = useRef<SeriesBag | null>(null);
-  const lastTimeRef = useRef<number>(0);
+  const candleRef = useRef<any>(null);
+  const lineRef = useRef<any>(null);
 
-  const active = selected && markets.includes(selected) ? selected : markets[0];
-  const snap = active ? state.indicators[active] : undefined;
+  const active = selected && markets.includes(selected) ? selected : markets[0] ?? "";
+  const snap = active ? state.indicators?.[active] : undefined;
+  const ohlc = active ? state.candles?.[active] ?? [] : [];
 
   // Mount the chart once.
   useEffect(() => {
@@ -37,69 +39,101 @@ export function LiveChart({ state }: { state: AlgoState }) {
         autoSize: true,
         layout: { background: { color: "#0a0a0a" }, textColor: "#999" },
         grid: { vertLines: { color: "#161616" }, horzLines: { color: "#161616" } },
-        timeScale: { timeVisible: true, secondsVisible: true, borderColor: "#222" },
+        timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#222" },
         rightPriceScale: { borderColor: "#222" },
+        crosshair: { mode: 0 },
       });
-      seriesRef.current = {
-        price: chart.addLineSeries({ color: "#e8c97a", lineWidth: 2 }),
-        ema9: chart.addLineSeries({ color: "#3b82f6", lineWidth: 1 }),
-        ema21: chart.addLineSeries({ color: "#a855f7", lineWidth: 1 }),
-        ema55: chart.addLineSeries({ color: "#555555", lineWidth: 1 }),
-      };
+      candleRef.current = chart.addCandlestickSeries({
+        upColor: "#22c55e", downColor: "#ef4444", borderVisible: false,
+        wickUpColor: "#22c55e", wickDownColor: "#ef4444",
+      });
+      lineRef.current = chart.addLineSeries({ color: "#e8c97a", lineWidth: 2 });
       chartRef.current = chart;
     })();
     return () => {
       disposed = true;
       chartRef.current?.remove();
       chartRef.current = null;
-      seriesRef.current = null;
+      candleRef.current = null;
+      lineRef.current = null;
     };
   }, []);
 
-  // Reset the lines when the selected market changes.
+  // Push data whenever the candles, market, or mode change.
   useEffect(() => {
-    const s = seriesRef.current;
-    if (!s) return;
-    s.price.setData([]);
-    s.ema9.setData([]);
-    s.ema21.setData([]);
-    s.ema55.setData([]);
-    lastTimeRef.current = 0;
-  }, [active]);
+    const candle = candleRef.current;
+    const line = lineRef.current;
+    if (!candle || !line) return;
 
-  // Append the latest tick.
-  useEffect(() => {
-    const s = seriesRef.current;
-    if (!s || !snap) return;
-    const t = Math.floor(new Date(state.server_time).getTime() / 1000);
-    if (t < lastTimeRef.current) return;
-    lastTimeRef.current = t;
-    s.price.update({ time: t, value: snap.price });
-    if (snap.ema_fast) s.ema9.update({ time: t, value: snap.ema_fast });
-    if (snap.ema_mid) s.ema21.update({ time: t, value: snap.ema_mid });
-    if (snap.ema_slow) s.ema55.update({ time: t, value: snap.ema_slow });
-  }, [state.server_time, snap]);
+    // De-dup + sort by time (lightweight-charts requires strictly ascending unique times).
+    const seen = new Set<number>();
+    const rows = [...ohlc]
+      .sort((a, b) => a.time - b.time)
+      .filter((c) => (seen.has(c.time) ? false : (seen.add(c.time), true)));
+
+    if (mode === "candles") {
+      candle.setData(rows);
+      line.setData([]);
+    } else {
+      candle.setData([]);
+      line.setData(rows.map((c) => ({ time: c.time, value: c.close })));
+    }
+    chartRef.current?.timeScale().fitContent();
+  }, [ohlc, mode, active]);
+
+  function toggleFullscreen() {
+    const el = wrapRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void el.requestFullscreen?.();
+  }
 
   return (
-    <div className="rounded-md border border-border bg-bg2">
+    <div ref={wrapRef} className="flex h-full flex-col rounded-md border border-border bg-bg2">
       <div className="flex items-center justify-between border-b border-border px-4 py-2">
-        <span className="font-mono text-[10px] uppercase tracking-wider text-gold">
-          // Live Chart
-        </span>
-        <select
-          value={active}
-          onChange={(e) => setSelected(e.target.value)}
-          className="rounded border border-border bg-bg3 px-2 py-1 font-mono text-[11px] text-textmid outline-none"
-        >
-          {markets.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
+        <span className="font-mono text-[10px] uppercase tracking-wider text-gold">// Live Chart</span>
+        <div className="flex items-center gap-2">
+          <select
+            value={active}
+            onChange={(e) => setSelected(e.target.value)}
+            className="rounded border border-border bg-bg3 px-2 py-1 font-mono text-[11px] text-textmid outline-none focus:border-gold"
+          >
+            {markets.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+          <div className="flex overflow-hidden rounded border border-border font-mono text-[10px]">
+            <button
+              onClick={() => setMode("candles")}
+              className={`px-2 py-1 ${mode === "candles" ? "bg-gold/15 text-gold" : "text-textmid hover:text-gold"}`}
+            >
+              Candles
+            </button>
+            <button
+              onClick={() => setMode("line")}
+              className={`border-l border-border px-2 py-1 ${mode === "line" ? "bg-gold/15 text-gold" : "text-textmid hover:text-gold"}`}
+            >
+              Line
+            </button>
+          </div>
+          <button
+            onClick={toggleFullscreen}
+            title="Fullscreen"
+            className="rounded border border-border px-2 py-1 font-mono text-[11px] text-textmid transition hover:border-gold hover:text-gold"
+          >
+            ⛶
+          </button>
+        </div>
       </div>
 
-      <div ref={containerRef} className="h-[300px] w-full" />
+      <div className="relative flex-1">
+        <div ref={containerRef} className="absolute inset-0" />
+        {ohlc.length === 0 && (
+          <div className="absolute inset-0 flex items-center justify-center font-mono text-xs text-textdim">
+            No candle data yet — waiting for the engine to publish prices…
+          </div>
+        )}
+      </div>
 
       {snap && (
         <div className="grid grid-cols-2 gap-px border-t border-border bg-border sm:grid-cols-5">
@@ -114,20 +148,10 @@ export function LiveChart({ state }: { state: AlgoState }) {
   );
 }
 
-function Metric({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value?: string | number;
-  accent?: boolean;
-}) {
+function Metric({ label, value, accent }: { label: string; value?: string | number; accent?: boolean }) {
   return (
     <div className="bg-bg3 px-3 py-2">
-      <div className="font-mono text-[9px] uppercase tracking-wider text-textdim">
-        {label}
-      </div>
+      <div className="font-mono text-[9px] uppercase tracking-wider text-textdim">{label}</div>
       <div className={`text-sm ${accent ? "text-gold" : "text-textmid"}`}>{value}</div>
     </div>
   );

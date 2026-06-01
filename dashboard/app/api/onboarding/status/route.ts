@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 
 type StoredConfig = {
   ig?: { acc_type?: string; username?: string };
-  anthropic?: { api_key?: string; model?: string };
+  anthropic?: { api_key?: string; model?: string; enabled?: boolean };
   risk?: {
     profile?: string;
     active_markets?: string[];
@@ -47,6 +47,7 @@ export async function GET() {
         ig_connected: hasIg,
         claude_enabled: !!cfg.anthropic?.api_key,
         claude_model: cfg.anthropic?.model ?? "claude-sonnet-4-6",
+        ai_enabled: cfg.anthropic?.enabled !== false,
         risk_profile: cfg.risk?.profile ?? "prop_ftmo",
         active_markets: cfg.risk?.active_markets ?? [],
         starting_equity: cfg.risk?.starting_equity ?? 0,

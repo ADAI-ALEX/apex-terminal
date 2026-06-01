@@ -92,6 +92,7 @@ class OnboardingStatus(BaseModel):
     ig_connected: bool = False
     claude_enabled: bool = False
     claude_model: str = "claude-sonnet-4-6"
+    ai_enabled: bool = True
     mode: str = "UNCONFIGURED"            # UNCONFIGURED | PAPER | DEMO | LIVE
     acc_type: str = "DEMO"
     risk_profile: str = "prop_ftmo"

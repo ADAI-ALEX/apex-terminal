@@ -162,12 +162,25 @@ class Heartbeat:
             snapshot = build_snapshot(market.key, market.epic, candles, self.s.strategy)
             snapshot.regime = classify(market, snapshot, self.s.strategy)
             STATE.snapshots[market.key] = snapshot
+            STATE.candles[market.key] = self._candle_view(candles)
 
             signal = self._best_signal(market, snapshot, candles)
             if signal is None:
                 continue
             await self._maybe_enter(signal, snapshot)
         self._push_state()
+
+    @staticmethod
+    def _candle_view(candles: list[Candle], limit: int = 150) -> list[dict]:
+        """Compact OHLC slice for the dashboard chart (epoch seconds + OHLC)."""
+        return [
+            {
+                "time": int(c.time.timestamp()),
+                "open": round(c.open, 5), "high": round(c.high, 5),
+                "low": round(c.low, 5), "close": round(c.close, 5),
+            }
+            for c in candles[-limit:]
+        ]
 
     def _best_signal(
         self, market: Market, snapshot: IndicatorSnapshot, candles: list[Candle]
@@ -345,7 +358,9 @@ class Heartbeat:
         n = self.s.heartbeat.history_candles
         m = self.s.heartbeat.candle_minutes_default
         for market in self.markets:
-            self.history[market.key] = await asyncio.to_thread(self.broker.candles, market.epic, m, n)
+            candles = await asyncio.to_thread(self.broker.candles, market.epic, m, n)
+            self.history[market.key] = candles
+            STATE.candles[market.key] = self._candle_view(candles)   # chart has data on first load
 
     async def _refresh_market(self, market: Market) -> list[Candle]:
         n = self.s.heartbeat.history_candles
@@ -433,6 +448,7 @@ class Heartbeat:
             status="HALTED" if self._weekly_halt else self.broker.mode,
             breakers=self._breaker_state(),
             broker_error=self._broker_error,
+            ai_enabled=self.s.ai_enabled,
         )
 
     def _breaker_state(self) -> dict[str, bool]:
