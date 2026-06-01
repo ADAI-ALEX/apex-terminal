@@ -5,7 +5,8 @@ import { fetchAlgoState } from "@/lib/vps";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const POLL_MS = 3000;
+// The engine pushes state to KV ~every 30s, so polling faster just wastes reads.
+const POLL_MS = 15000;
 
 export async function GET(request: Request) {
   const encoder = new TextEncoder();

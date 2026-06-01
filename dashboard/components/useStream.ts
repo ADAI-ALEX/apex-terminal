@@ -17,7 +17,18 @@ export function useStream(): { state: AlgoState | null; status: StreamStatus } {
     let source: EventSource | null = null;
     let retry: ReturnType<typeof setTimeout>;
 
+    const disconnect = () => {
+      source?.close();
+      source = null;
+      clearTimeout(retry);
+    };
+
     const connect = () => {
+      // Only stream while the tab is visible — saves KV reads / bandwidth when
+      // the dashboard is in the background or another tab.
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      if (source) return;
+      setStatus("connecting");
       source = new EventSource("/api/stream");
 
       source.addEventListener("state", (e) => {
@@ -31,15 +42,21 @@ export function useStream(): { state: AlgoState | null; status: StreamStatus } {
 
       source.addEventListener("error", () => {
         setStatus("error");
-        source?.close();
-        retry = setTimeout(connect, 4000);
+        disconnect();
+        retry = setTimeout(connect, 5000);
       });
     };
 
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") connect();
+      else disconnect();
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
     connect();
     return () => {
-      source?.close();
-      clearTimeout(retry);
+      document.removeEventListener("visibilitychange", onVisibility);
+      disconnect();
     };
   }, []);
 

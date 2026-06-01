@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { auth, signOut } from "@/auth";
+import { auth } from "@/auth";
 import { Dashboard } from "@/components/Dashboard";
 import { OnboardingGate } from "@/components/OnboardingGate";
+import { SignOutButton } from "@/components/SignOutButton";
 
 export default async function Page() {
   const session = await auth();
@@ -25,16 +26,7 @@ export default async function Page() {
           >
             Settings
           </Link>
-          <form
-            action={async () => {
-              "use server";
-              await signOut({ redirectTo: "/login" });
-            }}
-          >
-            <button className="rounded border border-border px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-textmid transition hover:border-gold hover:text-gold">
-              Sign out
-            </button>
-          </form>
+          <SignOutButton />
         </div>
       </header>
 
