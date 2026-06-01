@@ -19,6 +19,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from apex.config import get_settings
 from apex.core.state import STATE
+from apex.onboarding import service as onboarding
+from apex.onboarding.schema import OnboardingPayload, OnboardingStatus, ValidationResponse
+from apex.onboarding.store import STORE
 
 
 def create_app() -> FastAPI:
@@ -40,7 +43,12 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health(x_apex_secret: str | None = Header(default=None)) -> dict:
         snap = STATE.snapshot()
-        body = {"status": "ok", "mode": snap["mode"], "algo_status": snap["status"]}
+        body = {
+            "status": "ok",
+            "mode": snap["mode"],
+            "algo_status": snap["status"],
+            "configured": STORE.is_configured(),
+        }
         if x_apex_secret == settings.vps_secret:
             body.update(
                 positions=len(snap["positions"]),
@@ -53,6 +61,42 @@ def create_app() -> FastAPI:
     async def state(x_apex_secret: str | None = Header(default=None)) -> dict:
         _check_secret(x_apex_secret)
         return STATE.snapshot()
+
+    # ── Onboarding (the unconfigured-launch gate) ────────────────────────
+    # /onboarding/status is intentionally unauthenticated: it carries no secrets
+    # (booleans + masked hints only) and the dashboard must read it *before* it
+    # knows whether the system is configured. Mutating routes require the secret.
+    @app.get("/onboarding/status")
+    async def onboarding_status() -> OnboardingStatus:
+        return onboarding.current_status()
+
+    @app.post("/onboarding/validate")
+    async def onboarding_validate(
+        payload: OnboardingPayload, x_apex_secret: str | None = Header(default=None)
+    ) -> ValidationResponse:
+        _check_secret(x_apex_secret)
+        return await asyncio.to_thread(onboarding.validate, payload)
+
+    @app.post("/onboarding/save")
+    async def onboarding_save(
+        payload: OnboardingPayload, x_apex_secret: str | None = Header(default=None)
+    ) -> ValidationResponse:
+        _check_secret(x_apex_secret)
+        result = await asyncio.to_thread(onboarding.save, payload)
+        if not result.ok:
+            raise HTTPException(status_code=422, detail=result.model_dump())
+        return result
+
+    @app.post("/onboarding/reset")
+    async def onboarding_reset(x_apex_secret: str | None = Header(default=None)) -> OnboardingStatus:
+        _check_secret(x_apex_secret)
+        STORE.clear()
+        from apex.config import reload_settings
+        from apex.onboarding.runtime import RUNTIME
+
+        reload_settings()
+        RUNTIME.reset()
+        return onboarding.current_status()
 
     return app
 

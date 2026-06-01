@@ -1,5 +1,6 @@
 import { auth, signOut } from "@/auth";
 import { Dashboard } from "@/components/Dashboard";
+import { OnboardingGate } from "@/components/OnboardingGate";
 
 export default async function Page() {
   const session = await auth();
@@ -30,7 +31,9 @@ export default async function Page() {
         </div>
       </header>
 
-      <Dashboard />
+      <OnboardingGate>
+        <Dashboard />
+      </OnboardingGate>
     </main>
   );
 }
