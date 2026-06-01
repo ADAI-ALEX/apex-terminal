@@ -29,6 +29,8 @@ from typing import Any
 
 from loguru import logger
 
+from apex.cloud import kv
+
 SCHEMA_VERSION = 1
 _SECRET_FIELDS = ("password", "api_key")   # masked in redacted views
 
@@ -98,7 +100,13 @@ class ConfigStore:
         return has_ig or has_profile
 
     def load(self) -> dict[str, Any] | None:
-        """Decrypt and return the stored config, or ``None`` if absent/unreadable."""
+        """Return the stored config, or ``None`` if absent/unreadable.
+
+        In KV mode (cloud relay) config lives in Vercel KV, written by the dashboard
+        wizard; otherwise it's the local encrypted file.
+        """
+        if kv.kv_enabled():
+            return kv.kv_get(kv.CONFIG_KEY)
         if not self.config_path.exists():
             return None
         fernet = self._fernet(create=False)
@@ -113,15 +121,23 @@ class ConfigStore:
             return None
 
     def save(self, data: dict[str, Any]) -> None:
-        """Encrypt and persist the config. Raises if encryption is unavailable."""
+        """Persist the config. KV mode writes to Vercel KV; else encrypted local file."""
+        payload_base = {"version": SCHEMA_VERSION, **data}
+        if kv.kv_enabled():
+            # KV is token-protected (the REST token is a server-only secret), so the
+            # config travels token-gated rather than Fernet-encrypted in this mode.
+            if not kv.kv_set(kv.CONFIG_KEY, payload_base):
+                raise RuntimeError("Failed to write config to Vercel KV.")
+            logger.info("Saved runtime config to Vercel KV ('{}').", kv.CONFIG_KEY)
+            return
+
         fernet = self._fernet(create=True)
         if fernet is None:
             raise RuntimeError(
                 "Cannot persist credentials securely: install `cryptography` "
                 "(pip install cryptography). Refusing to write secrets in plaintext."
             )
-        payload = {"version": SCHEMA_VERSION, **data}
-        token = fernet.encrypt(json.dumps(payload).encode("utf-8"))
+        token = fernet.encrypt(json.dumps(payload_base).encode("utf-8"))
         self.dir.mkdir(parents=True, exist_ok=True)
         self.config_path.write_bytes(token)
         _restrict(self.config_path)
@@ -134,6 +150,10 @@ class ConfigStore:
 
     def clear(self) -> None:
         """Delete the persisted config (used by a 'reset onboarding' action)."""
+        if kv.kv_enabled():
+            kv.kv_delete(kv.CONFIG_KEY)
+            logger.info("Cleared runtime config from Vercel KV.")
+            return
         try:
             self.config_path.unlink(missing_ok=True)
             logger.info("Cleared runtime config.")

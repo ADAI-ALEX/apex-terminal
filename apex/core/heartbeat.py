@@ -20,6 +20,7 @@ from loguru import logger
 from apex.agents.eod_analyst import EodAnalyst
 from apex.agents.portfolio_reviewer import PortfolioReviewer
 from apex.agents.signal_evaluator import SignalEvaluator
+from apex.cloud import kv
 from apex.config import Direction, Market, Settings, get_settings
 from apex.core.state import STATE
 from apex.ig.client import Broker, create_broker
@@ -104,6 +105,7 @@ class Heartbeat:
                 await self._close(pos, reason)
         await self._prop_check()
         self._push_state()
+        await self._publish_kv()
 
     async def _prop_check(self) -> None:
         """Prop-firm floating-equity circuit breaker (sampled every Tier-1 cycle).
@@ -244,8 +246,19 @@ class Heartbeat:
     # ──────────────────────────────────────────────────────────────────
     async def _health(self) -> None:
         self._push_state()
+        await self._publish_kv()
         logger.info("♥ alive | positions={} daily=£{:.2f} ({:.1f}%) mode={}",
                     len(self.positions), STATE.daily_pnl, STATE.daily_pnl_pct, self.broker.mode)
+
+    async def _publish_kv(self) -> None:
+        """Push the live snapshot to Vercel KV so the dashboard can read it from
+        anywhere (cloud-relay mode). No-op when KV isn't configured."""
+        if not kv.kv_enabled():
+            return
+        try:
+            await asyncio.to_thread(kv.kv_set, kv.STATE_KEY, STATE.snapshot())
+        except Exception as exc:  # never let telemetry break the loop
+            logger.debug("KV state publish skipped: {}", exc)
 
     # ──────────────────────────────────────────────────────────────────
     #  Shared helpers
