@@ -1,20 +1,37 @@
 import type { AlgoState } from "./types";
 
 /**
- * Fetch the current algo state from the VPS FastAPI server.
- * Sends the shared secret; only our deployment can read /state.
+ * Server-side proxy to the VPS FastAPI state server. Keeps VPS_SECRET on the
+ * server (never shipped to the browser). Returns null if the VPS is unreachable
+ * or unconfigured. Used by the SSE stream and the onboarding API routes.
  */
-export async function fetchAlgoState(): Promise<AlgoState | null> {
+export async function vpsFetch(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response | null> {
   const url = process.env.VPS_URL;
   const secret = process.env.VPS_SECRET;
   if (!url || !secret) return null;
 
+  const headers = new Headers(init.headers);
+  headers.set("X-Apex-Secret", secret);
+  if (init.body) headers.set("Content-Type", "application/json");
+
   try {
-    const res = await fetch(`${url}/state`, {
-      headers: { "X-Apex-Secret": secret },
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
+    return await fetch(`${url}${path}`, { ...init, headers, cache: "no-store" });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch the current algo state from the VPS FastAPI server.
+ * Sends the shared secret; only our deployment can read /state.
+ */
+export async function fetchAlgoState(): Promise<AlgoState | null> {
+  const res = await vpsFetch("/state");
+  if (!res || !res.ok) return null;
+  try {
     return (await res.json()) as AlgoState;
   } catch {
     return null;

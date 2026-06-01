@@ -9,6 +9,7 @@ const BREAKER_LABELS: Record<string, string> = {
   max_positions: "Max positions",
   consecutive_losses: "Loss streak",
   trading_disabled: "Trading off",
+  prop_circuit: "Prop breaker",
 };
 
 export function StatusBar({
@@ -45,6 +46,15 @@ export function StatusBar({
         Claude calls:{" "}
         <span className="text-textmid">{state.api_calls.claude ?? 0}</span>
       </span>
+      {state.prop?.enabled && (
+        <span className="text-textdim">
+          prop DD:{" "}
+          <span className={state.prop.locked ? "text-down" : "text-textmid"}>
+            {state.prop.daily_dd_pct.toFixed(2)}%/{state.prop.daily_limit_pct}%d ·{" "}
+            {state.prop.total_dd_pct.toFixed(2)}%/{state.prop.total_limit_pct}%t
+          </span>
+        </span>
+      )}
 
       <div className="ml-auto flex flex-wrap gap-2">
         {Object.entries(state.breakers).map(([key, tripped]) => (

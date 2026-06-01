@@ -26,6 +26,7 @@ from apex.ig.client import Broker, create_broker
 from apex.indicators.engine import build_snapshot
 from apex.journal.db import TradeJournal
 from apex.models import Candle, IndicatorSnapshot, Position, Signal
+from apex.risk.prop_guard import PropAction, PropGuard
 from apex.risk.risk_engine import RiskContext, RiskEngine
 from apex.strategies import ALL_STRATEGIES
 from apex.strategies.regime import classify
@@ -48,6 +49,7 @@ class Heartbeat:
         self.broker = broker or create_broker(self.s)
         self.journal = journal or TradeJournal()
         self.risk = RiskEngine(self.s.risk)
+        self.prop_guard = PropGuard(self.s.prop)
         self.evaluator = SignalEvaluator()
         self.reviewer = PortfolioReviewer()
         self.eod = EodAnalyst()
@@ -100,7 +102,41 @@ class Heartbeat:
             reason = self.risk.stop_or_target_hit(pos)
             if reason:
                 await self._close(pos, reason)
+        await self._prop_check()
         self._push_state()
+
+    async def _prop_check(self) -> None:
+        """Prop-firm floating-equity circuit breaker (sampled every Tier-1 cycle).
+
+        On LIQUIDATE: flatten every open position immediately and latch the lock so
+        Tier 2 takes no new entries until the daily reset (or a manual restart on a
+        total-drawdown breach). Hard stops already ride in each order payload, so
+        this is the *account-level* backstop on top of per-position stops.
+        """
+        equity = await asyncio.to_thread(self._floating_equity)
+        decision = self.prop_guard.evaluate(equity)
+        STATE.prop = {
+            "enabled": self.s.prop.enabled,
+            "action": decision.action.value,
+            "daily_dd_pct": round(decision.daily_dd_pct, 2),
+            "total_dd_pct": round(decision.total_dd_pct, 2),
+            "daily_limit_pct": self.s.prop.daily_dd_limit_pct,
+            "total_limit_pct": self.s.prop.total_dd_limit_pct,
+            "locked": decision.locked,
+            "reason": decision.reason,
+        }
+        if decision.action is PropAction.LIQUIDATE and self.positions:
+            logger.error("PropGuard LIQUIDATE — flattening {} position(s): {}",
+                         len(self.positions), decision.reason)
+            for pos in list(self.positions.values()):
+                await self._close(pos, "PROP_BREAKER")
+
+    def _floating_equity(self) -> float:
+        """Account balance + open (floating) P&L — what a prop auditor measures."""
+        account = self.broker.account()
+        base = account.balance or self.s.starting_equity
+        unrealised = sum(p.unrealised_pnl for p in self.positions.values())
+        return float(base) + float(unrealised)
 
     # ──────────────────────────────────────────────────────────────────
     #  Tier 2 — signal generation + Claude + execution
@@ -135,6 +171,10 @@ class Heartbeat:
         return max(candidates, key=lambda s: s.confidence)
 
     async def _maybe_enter(self, signal: Signal, snapshot: IndicatorSnapshot) -> None:
+        if self.prop_guard.locked:
+            logger.debug("Prop circuit breaker locked — skipping {} {}.",
+                         signal.direction.value, signal.market_key)
+            return
         ctx = self._risk_context(signal)
         decision = self.risk.evaluate_entry(signal, ctx)
         if not decision.allowed:
@@ -305,10 +345,13 @@ class Heartbeat:
 
     def _breaker_state(self) -> dict[str, bool]:
         r = self.s.risk
-        return {
+        breakers = {
             "daily_loss": STATE.daily_pnl_pct <= r.daily_loss_limit_pct,
             "weekly_loss": self._weekly_halt,
             "max_positions": len(self.positions) >= r.max_concurrent_positions,
             "consecutive_losses": self.journal.consecutive_losses() >= r.consecutive_loss_trigger,
             "trading_disabled": not self.s.trading_enabled,
         }
+        if self.s.prop.enabled:
+            breakers["prop_circuit"] = self.prop_guard.locked
+        return breakers

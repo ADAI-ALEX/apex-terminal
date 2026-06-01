@@ -63,6 +63,16 @@ export interface AlgoState {
     losses?: number;
   };
   breakers: Record<string, boolean>;
+  prop?: {
+    enabled: boolean;
+    action: string;
+    daily_dd_pct: number;
+    total_dd_pct: number;
+    daily_limit_pct: number;
+    total_limit_pct: number;
+    locked: boolean;
+    reason: string;
+  };
   portfolio_health: number;
   api_calls: Record<string, number>;
   last_heartbeat: string;

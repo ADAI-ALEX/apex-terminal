@@ -5,7 +5,24 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from apex.models import Candle
+
+
+@pytest.fixture(autouse=True)
+def _isolated_config(tmp_path, monkeypatch):
+    """Point the onboarding store at an empty temp dir so tests stay hermetic.
+
+    Without this, a real ``~/.apex/runtime.json.enc`` on the dev machine would
+    overlay onto Settings and change risk defaults under the tests' feet.
+    """
+    monkeypatch.setenv("APEX_CONFIG_DIR", str(tmp_path / "apex_cfg"))
+    from apex.config import reload_settings
+
+    reload_settings()
+    yield
+    reload_settings()
 
 
 def make_candles(closes: Sequence[float], spread: float = 0.5) -> list[Candle]:

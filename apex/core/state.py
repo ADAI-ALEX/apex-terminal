@@ -30,6 +30,7 @@ class SharedState:
         self.weekly_pnl_pct: float = 0.0
         self.stats: dict[str, Any] = {}
         self.breakers: dict[str, bool] = {}      # name -> tripped?
+        self.prop: dict[str, Any] = {}           # prop-firm guard telemetry
         self.last_heartbeat: datetime = datetime.now(timezone.utc)
         self.api_calls: dict[str, int] = {"ig": 0, "claude": 0}
         self.portfolio_health: int = 100
@@ -62,6 +63,7 @@ class SharedState:
                 },
                 "stats": self.stats,
                 "breakers": self.breakers,
+                "prop": self.prop,
                 "portfolio_health": self.portfolio_health,
                 "api_calls": self.api_calls,
                 "last_heartbeat": self.last_heartbeat.isoformat(),
