@@ -39,14 +39,23 @@ vercel deploy --prod
 (Or click **Redeploy** on the latest deployment in the Vercel dashboard.)
 
 ### 3. Point your laptop at the same store
-Just run **`start.bat`** again. It runs `scripts/setup_local_env.py`, which pulls the
-KV credentials down from Vercel into your local `.env`, and prints:
+Run **`start.bat`**. It tries to pull the KV credentials from Vercel automatically.
 
-```
-Mode : CLOUD RELAY (Vercel KV) ...
-```
+**Note:** Vercel marks the Redis integration's keys as *sensitive*, so they often can't
+be auto-pulled (they arrive empty). If `start.bat` prints `Mode : DIRECT` and mentions
+sensitive keys, do this one-time copy:
 
-That confirms the engine is in cloud-relay mode.
+1. Vercel → **Storage** → your Redis store → the **`.env.local`** (or "Connect" /
+   "Quickstart") tab. Copy the two lines:
+   ```
+   KV_REST_API_URL="https://....upstash.io"
+   KV_REST_API_TOKEN="AX...."
+   ```
+2. Paste them into your laptop's **`.env`** (repo root).
+3. Run `start.bat` again → it now prints `Mode : CLOUD RELAY`.
+
+That confirms the engine is in cloud-relay mode. (`UPSTASH_REDIS_REST_URL`/`_TOKEN`
+names work too.)
 
 ---
 

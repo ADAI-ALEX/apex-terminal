@@ -176,9 +176,21 @@ def main() -> None:
     print("  Local config ready.")
     print(f"  Web UI    : {dashboard_url}")
     print(f"  Login     : username = {username}    password = {password}")
+    # Vercel marks integration (KV) vars as "sensitive" → `vercel env pull` returns the
+    # KEY but an EMPTY value. Detect that and tell the user to paste them once.
+    kv_sensitive = (not cloud) and any(
+        k in vercel for k in ("KV_REST_API_URL", "UPSTASH_REDIS_REST_URL")
+    )
     if cloud:
         print("  Mode      : CLOUD RELAY (Vercel KV) - this laptop just runs the engine;")
         print("              configure from anywhere at the Web UI above.")
+    elif kv_sensitive:
+        print("  Mode      : DIRECT - Redis store IS attached on Vercel, but its keys are")
+        print("              marked 'sensitive' so they can't be auto-pulled. ONE-TIME FIX:")
+        print("              Vercel -> Storage -> your Redis store -> '.env.local' tab. Copy")
+        print("              the KV_REST_API_URL and KV_REST_API_TOKEN lines into this file:")
+        print(f"                {ENV}")
+        print("              then run start.bat again. (Details: docs/RUN_ON_VERCEL.md)")
     else:
         print("  Mode      : DIRECT - no Redis store attached yet. The Vercel UI can't")
         print("              reach this laptop until you attach one (docs/RUN_ON_VERCEL.md).")

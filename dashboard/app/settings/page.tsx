@@ -142,7 +142,7 @@ export default function SettingsPage() {
           >
             {saving ? "Saving…" : "Save changes"}
           </button>
-          {saved && <span className="text-sm text-up">✓ Saved — your engine applies it within ~20s.</span>}
+          {saved && <span className="text-sm text-up">✓ Saved — your engine applies it within ~10s.</span>}
         </div>
         <p className="text-xs text-textdim">
           IG account credentials are set during onboarding. To change them, use the
