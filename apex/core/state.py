@@ -35,6 +35,11 @@ class SharedState:
         self.last_heartbeat: datetime = datetime.now(timezone.utc)
         self.api_calls: dict[str, int] = {"ig": 0, "claude": 0}
         self.portfolio_health: int = 100
+        self.ai_enabled: bool = True
+        self.claude_usage: dict[str, float] = {
+            "calls": 0, "input_tokens": 0, "output_tokens": 0, "est_cost_usd": 0.0,
+        }
+        self.candles: dict[str, list[dict[str, Any]]] = {}   # market_key -> OHLC for the chart
 
     def update(self, **fields: Any) -> None:
         with self._lock:
@@ -45,6 +50,14 @@ class SharedState:
     def bump_api(self, name: str, n: int = 1) -> None:
         with self._lock:
             self.api_calls[name] = self.api_calls.get(name, 0) + n
+
+    def record_claude_usage(self, input_tokens: int, output_tokens: int, cost_usd: float) -> None:
+        with self._lock:
+            u = self.claude_usage
+            u["calls"] = u.get("calls", 0) + 1
+            u["input_tokens"] = u.get("input_tokens", 0) + input_tokens
+            u["output_tokens"] = u.get("output_tokens", 0) + output_tokens
+            u["est_cost_usd"] = round(u.get("est_cost_usd", 0.0) + cost_usd, 4)
 
     def snapshot(self) -> dict[str, Any]:
         """Return a JSON-serialisable view for the dashboard."""
@@ -68,6 +81,9 @@ class SharedState:
                 "broker_error": self.broker_error,
                 "portfolio_health": self.portfolio_health,
                 "api_calls": self.api_calls,
+                "ai_enabled": self.ai_enabled,
+                "claude_usage": self.claude_usage,
+                "candles": self.candles,
                 "last_heartbeat": self.last_heartbeat.isoformat(),
                 "logs": recent_logs(50),
                 "server_time": datetime.now(timezone.utc).isoformat(),

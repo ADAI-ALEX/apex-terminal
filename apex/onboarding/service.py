@@ -49,6 +49,7 @@ def current_status(store: ConfigStore | None = None) -> OnboardingStatus:
         ig_connected=has_ig,
         claude_enabled=bool(anth.get("api_key")),
         claude_model=anth.get("model", "claude-sonnet-4-6"),
+        ai_enabled=anth.get("enabled", True),
         mode=mode,
         acc_type=acc_type,
         risk_profile=risk.get("profile", "prop_ftmo"),

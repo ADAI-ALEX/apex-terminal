@@ -1,14 +1,38 @@
 "use client";
 
+import { useRef, useState } from "react";
 import { useStream } from "./useStream";
 import { StatusBar } from "./StatusBar";
 import { Overview } from "./Overview";
 import { Positions } from "./Positions";
-import { SystemLog } from "./SystemLog";
 import { LiveChart } from "./LiveChart";
+import { RightPanel } from "./RightPanel";
 
 export function Dashboard() {
   const { state, status } = useStream();
+
+  // Resizable split between the chart and the side panel (chart % of the row width).
+  const [split, setSplit] = useState(64);
+  const rowRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+
+  function startDrag(e: React.MouseEvent) {
+    e.preventDefault();
+    dragging.current = true;
+    const onMove = (ev: MouseEvent) => {
+      if (!dragging.current || !rowRef.current) return;
+      const rect = rowRef.current.getBoundingClientRect();
+      const pct = ((ev.clientX - rect.left) / rect.width) * 100;
+      setSplit(Math.min(80, Math.max(40, pct)));
+    };
+    const onUp = () => {
+      dragging.current = false;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
 
   if (!state) {
     return (
@@ -37,12 +61,28 @@ export function Dashboard() {
       )}
       <StatusBar state={state} status={status} />
       <Overview state={state} />
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2">
+
+      {/* Desktop: resizable chart | side panel, equal height */}
+      <div ref={rowRef} className="hidden h-[460px] lg:flex">
+        <div style={{ width: `${split}%` }} className="min-w-0">
           <LiveChart state={state} />
         </div>
-        <SystemLog logs={state.logs} />
+        <div
+          onMouseDown={startDrag}
+          title="Drag to resize"
+          className="mx-1 w-1.5 shrink-0 cursor-col-resize rounded bg-border transition hover:bg-gold"
+        />
+        <div className="min-w-0 flex-1">
+          <RightPanel state={state} />
+        </div>
       </div>
+
+      {/* Mobile / tablet: stacked */}
+      <div className="space-y-4 lg:hidden">
+        <div className="h-[360px]"><LiveChart state={state} /></div>
+        <div className="h-[360px]"><RightPanel state={state} /></div>
+      </div>
+
       <Positions positions={state.positions} />
     </div>
   );

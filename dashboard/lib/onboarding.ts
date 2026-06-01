@@ -7,6 +7,7 @@ export interface OnboardingStatus {
   ig_connected: boolean;
   claude_enabled: boolean;
   claude_model: string;
+  ai_enabled?: boolean;
   mode: string; // UNCONFIGURED | PAPER | DEMO | LIVE | UNREACHABLE
   acc_type: string;
   risk_profile: string;
@@ -21,7 +22,7 @@ export interface OnboardingStatus {
 // Partial update from the Settings page. Blank secrets are preserved server-side.
 export interface SettingsUpdate {
   ig?: Partial<{ acc_type: string; username: string; password: string; api_key: string; account_id: string }>;
-  anthropic?: Partial<{ api_key: string; model: string }>;
+  anthropic?: Partial<{ api_key: string; model: string; enabled: boolean }>;
   risk?: Partial<{
     profile: string;
     active_markets: string[];

@@ -24,6 +24,7 @@ export default function SettingsPage() {
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [claudeKey, setClaudeKey] = useState("");
   const [model, setModel] = useState("claude-sonnet-4-6");
+  const [aiEnabled, setAiEnabled] = useState(true);
   const [profile, setProfile] = useState("prop_ftmo");
   const [markets, setMarkets] = useState<string[]>([]);
   const [tradingEnabled, setTradingEnabled] = useState(false);
@@ -41,6 +42,7 @@ export default function SettingsPage() {
       if (!s) return;
       setStatus(s);
       setModel(s.claude_model || "claude-sonnet-4-6");
+      setAiEnabled(s.ai_enabled !== false);
       setProfile(s.risk_profile || "prop_ftmo");
       setMarkets(s.active_markets ?? []);
       setTradingEnabled(!!s.trading_enabled);
@@ -62,7 +64,7 @@ export default function SettingsPage() {
     if (igApiKey) ig.api_key = igApiKey;
     const update: SettingsUpdate = {
       ig,
-      anthropic: { model, ...(claudeKey ? { api_key: claudeKey } : {}) },
+      anthropic: { model, enabled: aiEnabled, ...(claudeKey ? { api_key: claudeKey } : {}) },
       risk: { profile, active_markets: markets, trading_enabled: tradingEnabled },
     };
     const res = await saveSettings(update);
@@ -92,6 +94,20 @@ export default function SettingsPage() {
         {/* Claude AI */}
         <section className="rounded-md border border-border bg-bg2 p-5">
           <h2 className="mb-3 text-sm font-bold text-gold">Claude AI</h2>
+          <label className="mb-4 flex items-center gap-3 rounded border border-border bg-bg3 p-3">
+            <input
+              type="checkbox"
+              checked={aiEnabled}
+              onChange={(e) => { setAiEnabled(e.target.checked); setSaved(false); }}
+              className="h-4 w-4 accent-gold"
+            />
+            <span className="text-sm">
+              AI brain (Claude) — master switch
+              <span className="block text-xs text-textdim">
+                Off = pure-Python, zero Claude calls / zero AI cost. Python still executes and protects every order.
+              </span>
+            </span>
+          </label>
           <Label>Anthropic API key {status?.claude_enabled && <span className="text-up">(set — leave blank to keep)</span>}</Label>
           <input
             type="password"
