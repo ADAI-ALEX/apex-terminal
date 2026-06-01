@@ -20,7 +20,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from apex.config import get_settings
 from apex.core.state import STATE
 from apex.onboarding import service as onboarding
-from apex.onboarding.schema import OnboardingPayload, OnboardingStatus, ValidationResponse
+from apex.onboarding.schema import (
+    OnboardingPayload,
+    OnboardingStatus,
+    SettingsUpdate,
+    ValidationResponse,
+)
 from apex.onboarding.store import STORE
 
 
@@ -86,6 +91,13 @@ def create_app() -> FastAPI:
         if not result.ok:
             raise HTTPException(status_code=422, detail=result.model_dump())
         return result
+
+    @app.post("/onboarding/update")
+    async def onboarding_update(
+        payload: SettingsUpdate, x_apex_secret: str | None = Header(default=None)
+    ) -> OnboardingStatus:
+        _check_secret(x_apex_secret)
+        return await asyncio.to_thread(onboarding.update, payload.model_dump(exclude_none=True))
 
     @app.post("/onboarding/reset")
     async def onboarding_reset(x_apex_secret: str | None = Header(default=None)) -> OnboardingStatus:

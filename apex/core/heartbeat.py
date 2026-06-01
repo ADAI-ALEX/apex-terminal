@@ -21,9 +21,10 @@ from apex.agents.eod_analyst import EodAnalyst
 from apex.agents.portfolio_reviewer import PortfolioReviewer
 from apex.agents.signal_evaluator import SignalEvaluator
 from apex.cloud import kv
-from apex.config import Direction, Market, Settings, get_settings
+from apex.config import Direction, Market, Settings, get_settings, reload_settings
 from apex.core.state import STATE
 from apex.ig.client import Broker, create_broker
+from apex.onboarding.store import STORE
 from apex.indicators.engine import build_snapshot
 from apex.journal.db import TradeJournal
 from apex.models import Candle, IndicatorSnapshot, Position, Signal
@@ -62,6 +63,8 @@ class Heartbeat:
         self._weekly_halt = False
         self._eod_done_for: str | None = None
         self._running = True
+        self._config_stamp = self._read_config_stamp()
+        self._ig_sig = self._ig_signature()
 
     # ──────────────────────────────────────────────────────────────────
     #  Lifecycle
@@ -79,6 +82,7 @@ class Heartbeat:
             self._loop(self._tier2, self.s.heartbeat.tier2_signal_seconds, "Tier2"),
             self._loop(self._tier3, self.s.heartbeat.tier3_portfolio_seconds, "Tier3"),
             self._loop(self._health, self.s.heartbeat.health_seconds, "Health"),
+            self._loop(self._config_watch, 20, "ConfigWatch"),
         )
 
     def stop(self) -> None:
@@ -249,6 +253,55 @@ class Heartbeat:
         await self._publish_kv()
         logger.info("♥ alive | positions={} daily=£{:.2f} ({:.1f}%) mode={}",
                     len(self.positions), STATE.daily_pnl, STATE.daily_pnl_pct, self.broker.mode)
+
+    # ──────────────────────────────────────────────────────────────────
+    #  Config watcher — apply Settings changes saved from the dashboard
+    # ──────────────────────────────────────────────────────────────────
+    async def _config_watch(self) -> None:
+        """Detect a config change (e.g. Settings page → KV) and apply it live."""
+        stamp = self._read_config_stamp()
+        if stamp is None or stamp == self._config_stamp:
+            return
+        logger.info("Config change detected — applying new settings.")
+        self._config_stamp = stamp
+        await asyncio.to_thread(self._apply_settings_change)
+
+    def _apply_settings_change(self) -> None:
+        """Reload settings and swap the affected components (defensive; never raises)."""
+        try:
+            reload_settings()
+            new = get_settings()
+            prop_changed = new.prop != self.s.prop
+            ig_changed = self._ig_signature() != self._ig_sig
+            self.s = new
+            self.risk = RiskEngine(self.s.risk)
+            self.markets = self.s.active_markets()
+            # Re-create agents so a new Claude key / model takes effect.
+            self.evaluator = SignalEvaluator()
+            self.reviewer = PortfolioReviewer()
+            self.eod = EodAnalyst()
+            if prop_changed:
+                self.prop_guard = PropGuard(self.s.prop)  # new limits → fresh baseline
+            if ig_changed:
+                self.broker = create_broker(self.s)
+                self.broker.connect()
+                self._ig_sig = self._ig_signature()
+            STATE.update(trading_enabled=self.s.trading_enabled, status=self.broker.mode)
+            logger.info("Settings applied (profile={}, claude={}, markets={}).",
+                        self.s.risk_profile, "on" if self.s.has_anthropic_key else "off",
+                        ",".join(m.key for m in self.markets))
+        except Exception as exc:
+            logger.exception("Failed to apply settings change: {}", exc)
+
+    def _read_config_stamp(self) -> str | None:
+        try:
+            data = STORE.load() or {}
+            return data.get("configured_at")
+        except Exception:
+            return None
+
+    def _ig_signature(self) -> tuple:
+        return (self.s.ig_username, self.s.ig_password, self.s.ig_api_key, self.s.ig_acc_type.value)
 
     async def _publish_kv(self) -> None:
         """Push the live snapshot to Vercel KV so the dashboard can read it from

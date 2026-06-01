@@ -8,8 +8,15 @@ export const runtime = "nodejs";
 
 type StoredConfig = {
   ig?: { acc_type?: string; username?: string };
-  anthropic?: { api_key?: string };
-  risk?: { profile?: string; active_markets?: string[]; trading_enabled?: boolean };
+  anthropic?: { api_key?: string; model?: string };
+  risk?: {
+    profile?: string;
+    active_markets?: string[];
+    trading_enabled?: boolean;
+    starting_equity?: number;
+    account_currency?: string;
+    daily_target_pct?: number;
+  };
   configured_at?: string;
 };
 
@@ -30,8 +37,11 @@ export async function GET() {
           acc_type: cfg.ig?.acc_type ?? "DEMO",
           ig_connected: hasIg,
           claude_enabled: !!cfg.anthropic?.api_key,
+          claude_model: cfg.anthropic?.model ?? "claude-sonnet-4-6",
           risk_profile: cfg.risk?.profile ?? "prop_ftmo",
           active_markets: cfg.risk?.active_markets ?? [],
+          starting_equity: cfg.risk?.starting_equity ?? 0,
+          account_currency: cfg.risk?.account_currency ?? "GBP",
           trading_enabled: !!cfg.risk?.trading_enabled,
           masked: {},
           configured_at: cfg.configured_at ?? null,

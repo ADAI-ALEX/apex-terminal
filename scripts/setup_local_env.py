@@ -152,9 +152,13 @@ def main() -> None:
         "VPS_URL": "http://localhost:8080",      # used only in direct (non-KV) mode
         "VPS_SECRET": vps_secret,
     }
+    # The Web UI to open on launch (the Vercel deployment). Set DASHBOARD_URL=none
+    # to disable auto-open. Kept if already set.
+    dashboard_url = real(root.get("DASHBOARD_URL")) or "https://apex-dashboard-pearl.vercel.app/"
+
     # Root .env: sync the secret and neutralise any leftover template placeholders so
     # the algo boots UNCONFIGURED (UI onboarding) instead of using fake IG creds.
-    root_updates = {"VPS_SECRET": vps_secret}
+    root_updates = {"VPS_SECRET": vps_secret, "DASHBOARD_URL": dashboard_url}
     if not real(root.get("IG_USERNAME")):
         root_updates.update(IG_USERNAME="", IG_PASSWORD="", IG_API_KEY="")
     if not real(root.get("ANTHROPIC_API_KEY")):
@@ -170,14 +174,14 @@ def main() -> None:
     bar = "-" * 52
     print(bar)
     print("  Local config ready.")
+    print(f"  Web UI    : {dashboard_url}")
     print(f"  Login     : username = {username}    password = {password}")
     if cloud:
-        print("  Mode      : CLOUD RELAY (Vercel KV) - configure from anywhere at")
-        print("              your Vercel URL; this laptop just runs the engine.")
+        print("  Mode      : CLOUD RELAY (Vercel KV) - this laptop just runs the engine;")
+        print("              configure from anywhere at the Web UI above.")
     else:
-        print("  Mode      : LOCAL - open http://localhost:3000")
-        print("  Tip       : attach a free Redis store in Vercel + re-run to enable")
-        print("              run-from-anywhere (see docs/RUN_ON_VERCEL.md).")
+        print("  Mode      : DIRECT - no Redis store attached yet. The Vercel UI can't")
+        print("              reach this laptop until you attach one (docs/RUN_ON_VERCEL.md).")
     if pulled:
         print("  (synced settings from your Vercel project)")
     print(bar)
