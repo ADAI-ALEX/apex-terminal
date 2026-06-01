@@ -73,6 +73,7 @@ export interface AlgoState {
     locked: boolean;
     reason: string;
   };
+  broker_error?: string;
   portfolio_health: number;
   api_calls: Record<string, number>;
   last_heartbeat: string;

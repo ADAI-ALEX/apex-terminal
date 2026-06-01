@@ -29,6 +29,12 @@ export function Dashboard() {
 
   return (
     <div className="space-y-4">
+      {state.broker_error && (
+        <div className="rounded-md border border-down/40 bg-down/10 px-4 py-3 text-sm text-down">
+          <span className="font-bold">Broker not connected — running in simulation.</span>{" "}
+          {state.broker_error} Fix it in <a href="/settings" className="underline">Settings</a>.
+        </div>
+      )}
       <StatusBar state={state} status={status} />
       <Overview state={state} />
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

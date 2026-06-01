@@ -27,6 +27,11 @@ export default function SettingsPage() {
   const [profile, setProfile] = useState("prop_ftmo");
   const [markets, setMarkets] = useState<string[]>([]);
   const [tradingEnabled, setTradingEnabled] = useState(false);
+  // IG credentials (blank = keep existing).
+  const [igAccType, setIgAccType] = useState("DEMO");
+  const [igUsername, setIgUsername] = useState("");
+  const [igPassword, setIgPassword] = useState("");
+  const [igApiKey, setIgApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -39,6 +44,7 @@ export default function SettingsPage() {
       setProfile(s.risk_profile || "prop_ftmo");
       setMarkets(s.active_markets ?? []);
       setTradingEnabled(!!s.trading_enabled);
+      setIgAccType(s.acc_type || "DEMO");
     })();
   }, []);
 
@@ -50,14 +56,19 @@ export default function SettingsPage() {
   async function save() {
     setSaving(true);
     setSaved(false);
+    const ig: SettingsUpdate["ig"] = { acc_type: igAccType };
+    if (igUsername) ig.username = igUsername;
+    if (igPassword) ig.password = igPassword;
+    if (igApiKey) ig.api_key = igApiKey;
     const update: SettingsUpdate = {
+      ig,
       anthropic: { model, ...(claudeKey ? { api_key: claudeKey } : {}) },
       risk: { profile, active_markets: markets, trading_enabled: tradingEnabled },
     };
     const res = await saveSettings(update);
     setSaving(false);
     setSaved(res.ok);
-    if (res.ok) setClaudeKey("");
+    if (res.ok) { setClaudeKey(""); setIgPassword(""); setIgApiKey(""); }
   }
 
   return (
@@ -92,6 +103,28 @@ export default function SettingsPage() {
           />
           <Label>Model</Label>
           <Select value={model} onChange={(v) => { setModel(v); setSaved(false); }} options={MODELS} />
+        </section>
+
+        {/* IG broker */}
+        <section className="rounded-md border border-border bg-bg2 p-5">
+          <h2 className="mb-3 text-sm font-bold text-gold">IG broker</h2>
+          <p className="mb-3 text-xs text-textdim">
+            {status?.ig_connected
+              ? "Connected. Leave password / API key blank to keep them; change the username to fix a login error."
+              : "Not connected. Fill these in (or leave all blank to run in PAPER simulation)."}
+          </p>
+          <Label>Account type</Label>
+          <Select value={igAccType} onChange={(v) => { setIgAccType(v); setSaved(false); }}
+            options={[["DEMO", "Demo"], ["LIVE", "Live (real money)"]]} />
+          <div className="mt-3"><Label>IG username</Label>
+            <Input value={igUsername} placeholder="your IG username (not email)"
+              onChange={(v) => { setIgUsername(v); setSaved(false); }} /></div>
+          <div className="mt-3"><Label>IG password (blank = keep)</Label>
+            <Input type="password" value={igPassword} placeholder="•••• stored"
+              onChange={(v) => { setIgPassword(v); setSaved(false); }} /></div>
+          <div className="mt-3"><Label>IG API key (blank = keep)</Label>
+            <Input type="password" value={igApiKey} placeholder="•••• stored"
+              onChange={(v) => { setIgApiKey(v); setSaved(false); }} /></div>
         </section>
 
         {/* Trading */}
@@ -145,8 +178,7 @@ export default function SettingsPage() {
           {saved && <span className="text-sm text-up">✓ Saved — your engine applies it within ~10s.</span>}
         </div>
         <p className="text-xs text-textdim">
-          IG account credentials are set during onboarding. To change them, use the
-          onboarding wizard (reset from the algo) — they aren't editable here for safety.
+          Changes are stored securely and applied by your engine within ~10s.
         </p>
       </div>
     </main>
@@ -158,6 +190,23 @@ function Label({ children }: { children: React.ReactNode }) {
     <label className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-textdim">
       {children}
     </label>
+  );
+}
+
+function Input({
+  value, onChange, type = "text", placeholder,
+}: {
+  value: string; onChange: (v: string) => void; type?: string; placeholder?: string;
+}) {
+  return (
+    <input
+      type={type}
+      value={value}
+      placeholder={placeholder}
+      autoComplete="off"
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full rounded border border-border bg-bg3 px-3 py-2 text-sm outline-none focus:border-gold"
+    />
   );
 }
 

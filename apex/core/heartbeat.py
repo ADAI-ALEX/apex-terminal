@@ -63,6 +63,7 @@ class Heartbeat:
         self._weekly_halt = False
         self._eod_done_for: str | None = None
         self._running = True
+        self._broker_error = ""
         self._config_stamp = self._read_config_stamp()
         self._ig_sig = self._ig_signature()
 
@@ -70,11 +71,17 @@ class Heartbeat:
     #  Lifecycle
     # ──────────────────────────────────────────────────────────────────
     async def run(self) -> None:
-        await asyncio.to_thread(self.broker.connect)
+        # Resilient connect: a bad IG login must NEVER crash the engine. On failure we
+        # fall back to PaperBroker and surface the error to the dashboard so the user
+        # can fix their credentials in Settings.
+        await asyncio.to_thread(self._activate_broker_sync, self.broker)
         STATE.update(status=self.broker.mode, mode=self.broker.mode,
-                     trading_enabled=self.s.trading_enabled)
-        await self._seed_history()
-        await self._sync_positions()
+                     trading_enabled=self.s.trading_enabled, broker_error=self._broker_error)
+        try:
+            await self._seed_history()
+            await self._sync_positions()
+        except Exception as exc:  # never crash startup on a data hiccup
+            logger.exception("Startup data load failed (continuing): {}", exc)
         logger.info("Heartbeat starting — {} markets, mode={}", len(self.markets), self.broker.mode)
 
         await asyncio.gather(
@@ -283,10 +290,10 @@ class Heartbeat:
             if prop_changed:
                 self.prop_guard = PropGuard(self.s.prop)  # new limits → fresh baseline
             if ig_changed:
-                self.broker = create_broker(self.s)
-                self.broker.connect()
+                self._activate_broker_sync(create_broker(self.s))  # resilient re-connect
                 self._ig_sig = self._ig_signature()
-            STATE.update(trading_enabled=self.s.trading_enabled, status=self.broker.mode)
+            STATE.update(trading_enabled=self.s.trading_enabled, status=self.broker.mode,
+                         broker_error=self._broker_error)
             logger.info("Settings applied (profile={}, claude={}, markets={}).",
                         self.s.risk_profile, "on" if self.s.has_anthropic_key else "off",
                         ",".join(m.key for m in self.markets))
@@ -302,6 +309,24 @@ class Heartbeat:
 
     def _ig_signature(self) -> tuple:
         return (self.s.ig_username, self.s.ig_password, self.s.ig_api_key, self.s.ig_acc_type.value)
+
+    def _activate_broker_sync(self, broker: Broker) -> None:
+        """Connect ``broker``; on failure record a friendly error and fall back to
+        PaperBroker so the engine stays alive and the dashboard keeps updating."""
+        from apex.ig.client import PaperBroker
+        try:
+            broker.connect()
+            self.broker = broker
+            self._broker_error = ""
+        except Exception as exc:
+            msg = _friendly_ig_error(exc)
+            logger.error("Broker connect failed — running in PAPER (simulation): {}", msg)
+            self._broker_error = msg
+            self.broker = PaperBroker(self.s)
+            try:
+                self.broker.connect()
+            except Exception:  # paper connect can't really fail, but be safe
+                pass
 
     async def _publish_kv(self) -> None:
         """Push the live snapshot to Vercel KV so the dashboard can read it from
@@ -407,6 +432,7 @@ class Heartbeat:
             trading_enabled=self.s.trading_enabled,
             status="HALTED" if self._weekly_halt else self.broker.mode,
             breakers=self._breaker_state(),
+            broker_error=self._broker_error,
         )
 
     def _breaker_state(self) -> dict[str, bool]:
@@ -421,3 +447,26 @@ class Heartbeat:
         if self.s.prop.enabled:
             breakers["prop_circuit"] = self.prop_guard.locked
         return breakers
+
+
+def _friendly_ig_error(exc: Exception) -> str:
+    """Map IG's cryptic error codes to actionable messages for the dashboard."""
+    raw = str(exc) or exc.__class__.__name__
+    hints = {
+        "validation.pattern.invalid.authenticationRequest.identifier":
+            "IG rejected the username format — use your IG username (not your email).",
+        "error.security.invalid-details":
+            "IG rejected the username or password.",
+        "error.security.invalid-application-key":
+            "IG API key is invalid for this account/environment.",
+        "error.security.api-key-invalid":
+            "IG API key is invalid.",
+        "error.security.api-key-disabled":
+            "This IG API key is disabled — generate a new one in My IG.",
+        "error.public-api.failure.encryption.required":
+            "IG requires the encrypted-login flow for this key.",
+    }
+    for code, msg in hints.items():
+        if code in raw:
+            return f"{msg} (IG: {raw})"
+    return f"IG connection failed: {raw}"
