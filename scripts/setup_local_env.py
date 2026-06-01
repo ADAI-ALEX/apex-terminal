@@ -118,9 +118,13 @@ def main() -> None:
     root = parse(ENV)
     local = parse(LOCAL)
 
-    # Only reach out to Vercel if the local login isn't already set (keeps relaunches fast/offline).
-    need_creds = not (real(local.get("DASHBOARD_USERNAME")) and real(local.get("DASHBOARD_PASSWORD")))
-    vercel = try_vercel_pull() if need_creds else {}
+    # Pull from Vercel if the login isn't set yet OR cloud-relay (KV) creds aren't
+    # local yet — the latter catches the case where you attach the Redis store on
+    # Vercel after the first run.
+    have_login = real(local.get("DASHBOARD_USERNAME")) and real(local.get("DASHBOARD_PASSWORD"))
+    have_kv = real(root.get("KV_REST_API_URL"), local.get("KV_REST_API_URL"),
+                   root.get("UPSTASH_REDIS_REST_URL"), local.get("UPSTASH_REDIS_REST_URL"))
+    vercel = try_vercel_pull() if (not have_login or not have_kv) else {}
     pulled = bool(vercel)
 
     auth_secret = real(local.get("AUTH_SECRET"), vercel.get("AUTH_SECRET")) or secrets.token_urlsafe(32)
@@ -132,16 +136,22 @@ def main() -> None:
     vps_secret = real(root.get("VPS_SECRET"), local.get("VPS_SECRET"), vercel.get("VPS_SECRET")) \
         or secrets.token_urlsafe(24)
 
-    upsert(LOCAL, {
+    # Cloud-relay (Vercel KV / Upstash Redis) credentials, if a store is attached.
+    kv_url = real(root.get("KV_REST_API_URL"), local.get("KV_REST_API_URL"),
+                  vercel.get("KV_REST_API_URL"), vercel.get("UPSTASH_REDIS_REST_URL"))
+    kv_token = real(root.get("KV_REST_API_TOKEN"), local.get("KV_REST_API_TOKEN"),
+                    vercel.get("KV_REST_API_TOKEN"), vercel.get("UPSTASH_REDIS_REST_TOKEN"))
+    cloud = bool(kv_url and kv_token)
+
+    local_updates = {
         "AUTH_SECRET": auth_secret,
         "AUTH_TRUST_HOST": "true",
         "DASHBOARD_USERNAME": username,
         "DASHBOARD_PASSWORD": password,
         "DASHBOARD_PASSWORD_HASH": "",          # force the simple plaintext path locally
-        "VPS_URL": "http://localhost:8080",      # local dashboard always talks to the local server
+        "VPS_URL": "http://localhost:8080",      # used only in direct (non-KV) mode
         "VPS_SECRET": vps_secret,
-    })
-
+    }
     # Root .env: sync the secret and neutralise any leftover template placeholders so
     # the algo boots UNCONFIGURED (UI onboarding) instead of using fake IG creds.
     root_updates = {"VPS_SECRET": vps_secret}
@@ -149,16 +159,27 @@ def main() -> None:
         root_updates.update(IG_USERNAME="", IG_PASSWORD="", IG_API_KEY="")
     if not real(root.get("ANTHROPIC_API_KEY")):
         root_updates.update(ANTHROPIC_API_KEY="")
+    if cloud:
+        # The laptop algo (reads root .env) needs these to join the cloud relay.
+        root_updates.update(KV_REST_API_URL=kv_url, KV_REST_API_TOKEN=kv_token)
+        local_updates.update(KV_REST_API_URL=kv_url, KV_REST_API_TOKEN=kv_token)
+
+    upsert(LOCAL, local_updates)
     upsert(ENV, root_updates)
 
     bar = "-" * 52
     print(bar)
     print("  Local config ready.")
-    print(f"  Dashboard : http://localhost:3000")
     print(f"  Login     : username = {username}    password = {password}")
+    if cloud:
+        print("  Mode      : CLOUD RELAY (Vercel KV) - configure from anywhere at")
+        print("              your Vercel URL; this laptop just runs the engine.")
+    else:
+        print("  Mode      : LOCAL - open http://localhost:3000")
+        print("  Tip       : attach a free Redis store in Vercel + re-run to enable")
+        print("              run-from-anywhere (see docs/RUN_ON_VERCEL.md).")
     if pulled:
-        print("  (reused credentials from your Vercel project)")
-    print("  State srv : http://localhost:8080  (onboarding API)")
+        print("  (synced settings from your Vercel project)")
     print(bar)
     sys.stdout.flush()
 
