@@ -31,6 +31,7 @@ class SharedState:
         self.stats: dict[str, Any] = {}
         self.breakers: dict[str, bool] = {}      # name -> tripped?
         self.prop: dict[str, Any] = {}           # prop-firm guard telemetry
+        self.broker_error: str = ""              # last broker-connection error (shown in UI)
         self.last_heartbeat: datetime = datetime.now(timezone.utc)
         self.api_calls: dict[str, int] = {"ig": 0, "claude": 0}
         self.portfolio_health: int = 100
@@ -64,6 +65,7 @@ class SharedState:
                 "stats": self.stats,
                 "breakers": self.breakers,
                 "prop": self.prop,
+                "broker_error": self.broker_error,
                 "portfolio_health": self.portfolio_health,
                 "api_calls": self.api_calls,
                 "last_heartbeat": self.last_heartbeat.isoformat(),

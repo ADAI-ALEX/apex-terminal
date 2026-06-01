@@ -18,6 +18,11 @@ def _isolated_config(tmp_path, monkeypatch):
     overlay onto Settings and change risk defaults under the tests' feet.
     """
     monkeypatch.setenv("APEX_CONFIG_DIR", str(tmp_path / "apex_cfg"))
+    # Ensure cloud-relay (KV) mode is OFF so the store uses the local file backend,
+    # regardless of any KV creds in the dev machine's .env (loaded by load_dotenv).
+    for var in ("KV_REST_API_URL", "KV_REST_API_TOKEN",
+                "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
     from apex.config import reload_settings
 
     reload_settings()

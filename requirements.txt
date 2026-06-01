@@ -10,6 +10,7 @@ numpy>=1.26.0
 
 # IG Markets API (REST + Lightstreamer)
 trading-ig>=0.0.22
+munch>=4.0.0          # optional trading-ig dep (silences the startup warning)
 requests>=2.32.0
 
 # Claude API
