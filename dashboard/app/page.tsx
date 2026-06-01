@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { auth, signOut } from "@/auth";
 import { Dashboard } from "@/components/Dashboard";
 import { OnboardingGate } from "@/components/OnboardingGate";
@@ -18,6 +19,12 @@ export default async function Page() {
           <span className="hidden font-mono text-xs text-textmid sm:inline">
             {session?.user?.name}
           </span>
+          <Link
+            href="/settings"
+            className="rounded border border-border px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-textmid transition hover:border-gold hover:text-gold"
+          >
+            Settings
+          </Link>
           <form
             action={async () => {
               "use server";

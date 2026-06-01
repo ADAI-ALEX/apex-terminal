@@ -57,6 +57,15 @@ class OnboardingPayload(BaseModel):
     risk: RiskProfileIn = Field(default_factory=RiskProfileIn)
 
 
+class SettingsUpdate(BaseModel):
+    """Partial config update from the Settings page. Only provided fields change;
+    blank secrets are ignored so existing keys are preserved."""
+
+    ig: dict | None = None
+    anthropic: dict | None = None
+    risk: dict | None = None
+
+
 # ──────────────────────────────────────────────────────────────────────────
 #  Outbound (state server → wizard)
 # ──────────────────────────────────────────────────────────────────────────
@@ -82,6 +91,7 @@ class OnboardingStatus(BaseModel):
     configured: bool = False
     ig_connected: bool = False
     claude_enabled: bool = False
+    claude_model: str = "claude-sonnet-4-6"
     mode: str = "UNCONFIGURED"            # UNCONFIGURED | PAPER | DEMO | LIVE
     acc_type: str = "DEMO"
     risk_profile: str = "prop_ftmo"

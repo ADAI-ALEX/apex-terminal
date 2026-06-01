@@ -48,6 +48,7 @@ def current_status(store: ConfigStore | None = None) -> OnboardingStatus:
         configured=store.is_configured(),
         ig_connected=has_ig,
         claude_enabled=bool(anth.get("api_key")),
+        claude_model=anth.get("model", "claude-sonnet-4-6"),
         mode=mode,
         acc_type=acc_type,
         risk_profile=risk.get("profile", "prop_ftmo"),
@@ -58,6 +59,34 @@ def current_status(store: ConfigStore | None = None) -> OnboardingStatus:
         masked=masked_hints,
         configured_at=data.get("configured_at"),
     )
+
+
+def update(partial: dict, store: ConfigStore | None = None) -> OnboardingStatus:
+    """Merge a partial config update (from the Settings page) into the stored config.
+
+    Only provided fields change; a blank secret (password / api_key) is ignored so the
+    existing value is preserved. Reloads settings so a co-located algo picks it up.
+    """
+    store = store or STORE
+    data = store.load() or {"ig": {}, "anthropic": {}, "risk": {}}
+    for section in ("ig", "anthropic", "risk"):
+        incoming = partial.get(section) or {}
+        current = dict(data.get(section) or {})
+        for key, value in incoming.items():
+            if key in ("password", "api_key") and (value is None or value == ""):
+                continue  # never clobber a stored secret with a blank
+            current[key] = value
+        data[section] = current
+    data["configured_at"] = datetime.now(timezone.utc).isoformat()
+    store.save(data)
+    try:
+        from apex.config import reload_settings
+
+        reload_settings()
+    except Exception as exc:  # pragma: no cover
+        logger.error("Could not reload settings after update: {}", exc)
+    logger.info("Settings updated ({}).", ", ".join(k for k, v in partial.items() if v))
+    return current_status(store)
 
 
 def validate(payload: OnboardingPayload) -> ValidationResponse:

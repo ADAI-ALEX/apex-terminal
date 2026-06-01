@@ -6,6 +6,7 @@ export interface OnboardingStatus {
   configured: boolean;
   ig_connected: boolean;
   claude_enabled: boolean;
+  claude_model: string;
   mode: string; // UNCONFIGURED | PAPER | DEMO | LIVE | UNREACHABLE
   acc_type: string;
   risk_profile: string;
@@ -15,6 +16,33 @@ export interface OnboardingStatus {
   trading_enabled: boolean;
   masked: Record<string, string>;
   configured_at: string | null;
+}
+
+// Partial update from the Settings page. Blank secrets are preserved server-side.
+export interface SettingsUpdate {
+  ig?: Partial<{ acc_type: string; username: string; password: string; api_key: string; account_id: string }>;
+  anthropic?: Partial<{ api_key: string; model: string }>;
+  risk?: Partial<{
+    profile: string;
+    active_markets: string[];
+    trading_enabled: boolean;
+    starting_equity: number;
+    account_currency: string;
+    daily_target_pct: number;
+  }>;
+}
+
+export async function saveSettings(update: SettingsUpdate): Promise<{ ok: boolean }> {
+  try {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(update),
+    });
+    return { ok: res.ok };
+  } catch {
+    return { ok: false };
+  }
 }
 
 export interface FieldValidation {

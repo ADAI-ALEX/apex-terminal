@@ -12,10 +12,17 @@ export function Dashboard() {
 
   if (!state) {
     return (
-      <div className="flex h-64 items-center justify-center font-mono text-sm text-textmid">
-        {status === "error"
-          ? "Cannot reach the algo state server. Is the VPS running?"
-          : "Connecting to algo…"}
+      <div className="mx-auto max-w-md rounded-md border border-border bg-bg2 p-6 text-center">
+        <div className="mb-2 font-mono text-sm text-gold">Waiting for your trading engine…</div>
+        <p className="text-sm text-textmid">
+          Your config is saved. Now start the engine on your machine and leave it running:
+        </p>
+        <p className="mt-3 rounded border border-border bg-bg3 px-3 py-2 font-mono text-xs text-textmid">
+          double-click <span className="text-gold">start.bat</span>
+        </p>
+        <p className="mt-3 text-xs text-textdim">
+          Live data appears here within ~30s of the engine connecting. This page keeps retrying.
+        </p>
       </div>
     );
   }
