@@ -93,6 +93,12 @@ async def _amain() -> None:
     logger.info("Onboarding complete — starting heartbeat (profile={}, markets: {}).",
                 settings.risk_profile, ", ".join(m.key for m in settings.active_markets()))
 
+    # In cloud-relay mode, confirm to the dashboard that the algo picked up the config.
+    from apex.cloud import kv
+    if kv.kv_enabled():
+        from apex.onboarding import service
+        kv.kv_set(kv.STATUS_KEY, service.current_status().model_dump())
+
     # 3) Start the trading heartbeat.
     heartbeat = Heartbeat(settings=settings)
 

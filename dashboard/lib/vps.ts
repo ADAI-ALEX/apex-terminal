@@ -1,4 +1,5 @@
 import type { AlgoState } from "./types";
+import { kvEnabled, kvGet, STATE_KEY } from "./kv";
 
 /**
  * Server-side proxy to the VPS FastAPI state server. Keeps VPS_SECRET on the
@@ -29,6 +30,11 @@ export async function vpsFetch(
  * Sends the shared secret; only our deployment can read /state.
  */
 export async function fetchAlgoState(): Promise<AlgoState | null> {
+  // Cloud-relay mode: the laptop pushes state to KV; read it from there.
+  if (kvEnabled()) {
+    return await kvGet<AlgoState>(STATE_KEY);
+  }
+  // Direct mode: proxy the VPS/local state server.
   const res = await vpsFetch("/state");
   if (!res || !res.ok) return null;
   try {
