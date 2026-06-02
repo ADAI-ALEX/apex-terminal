@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { auth } from "@/auth";
-import { Dashboard } from "@/components/Dashboard";
+import { Workspace } from "@/components/Workspace";
 import { OnboardingGate } from "@/components/OnboardingGate";
 import { SignOutButton } from "@/components/SignOutButton";
 
@@ -31,7 +31,7 @@ export default async function Page() {
       </header>
 
       <OnboardingGate>
-        <Dashboard />
+        <Workspace />
       </OnboardingGate>
     </main>
   );

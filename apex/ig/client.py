@@ -28,12 +28,22 @@ _IG_RESOLUTION = {1: "MINUTE", 5: "MINUTE_5", 15: "MINUTE_15", 30: "MINUTE_30", 
 
 # trading-ig ≥ 0.0.22 + pandas ≥ 2.x: conv_resol() tries to parse IG resolution
 # strings (e.g. "MINUTE_5") as pandas offsets, which fails. The IG API accepts these
-# strings directly — bypass the broken validation entirely.
-try:
-    import trading_ig.utils as _ig_utils
-    _ig_utils.conv_resol = lambda r: r
-except Exception:
-    pass
+# strings directly, so bypass the broken validation. rest.py does
+# `from .utils import conv_resol`, so it holds its OWN binding — patch BOTH the utils
+# module and the already-imported reference inside rest.py.
+def _patch_conv_resol() -> None:
+    passthrough = lambda r: r  # noqa: E731 - IG resolution strings are already valid
+    for mod_name in ("trading_ig.utils", "trading_ig.rest"):
+        try:
+            import importlib
+            mod = importlib.import_module(mod_name)
+            if hasattr(mod, "conv_resol"):
+                mod.conv_resol = passthrough
+        except Exception:
+            pass
+
+
+_patch_conv_resol()
 
 
 class Broker(Protocol):

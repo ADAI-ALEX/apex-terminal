@@ -64,6 +64,7 @@ class Heartbeat:
         self._eod_done_for: str | None = None
         self._running = True
         self._broker_error = ""
+        self._last_backtest_id: str | None = None
         self._config_stamp = self._read_config_stamp()
         self._ig_sig = self._ig_signature()
 
@@ -90,6 +91,7 @@ class Heartbeat:
             self._loop(self._tier3, self.s.heartbeat.tier3_portfolio_seconds, "Tier3"),
             self._loop(self._health, self.s.heartbeat.health_seconds, "Health"),
             self._loop(self._config_watch, 8, "ConfigWatch"),
+            self._loop(self._backtest_watch, 5, "Backtest"),
         )
 
     def stop(self) -> None:
@@ -307,11 +309,41 @@ class Heartbeat:
                 self._ig_sig = self._ig_signature()
             STATE.update(trading_enabled=self.s.trading_enabled, status=self.broker.mode,
                          broker_error=self._broker_error)
-            logger.info("Settings applied (profile={}, claude={}, markets={}).",
-                        self.s.risk_profile, "on" if self.s.has_anthropic_key else "off",
+            self._push_state()  # refresh ai_enabled/breakers immediately
+            if kv.kv_enabled():  # publish now so the dashboard reflects it on its next poll
+                try:
+                    kv.kv_set(kv.STATE_KEY, STATE.snapshot())
+                except Exception:
+                    pass
+            logger.info("Settings applied (profile={}, ai={}, markets={}).",
+                        self.s.risk_profile, "on" if self.s.ai_enabled else "off",
                         ",".join(m.key for m in self.markets))
         except Exception as exc:
             logger.exception("Failed to apply settings change: {}", exc)
+
+    # ──────────────────────────────────────────────────────────────────
+    #  Backtest watcher — run requests posted from the dashboard (cloud relay)
+    # ──────────────────────────────────────────────────────────────────
+    async def _backtest_watch(self) -> None:
+        if not kv.kv_enabled():
+            return
+        req = await asyncio.to_thread(kv.kv_get, kv.BACKTEST_REQ_KEY)
+        if not req or not isinstance(req, dict):
+            return
+        rid = str(req.get("id", ""))
+        if not rid or rid == self._last_backtest_id:
+            return
+        self._last_backtest_id = rid
+        logger.info("Backtest request {} — running on real data...", rid)
+        result = await asyncio.to_thread(self.run_backtest_request, req)
+        await asyncio.to_thread(kv.kv_set, kv.BACKTEST_RES_KEY, {"id": rid, **result})
+        logger.info("Backtest {} complete.", rid)
+
+    def run_backtest_request(self, req: dict) -> dict:
+        """Fetch historical candles via the broker and run the backtest engine."""
+        from apex.backtest.runner import run_request
+
+        return run_request(self.broker, self.s, req)
 
     def _read_config_stamp(self) -> str | None:
         try:

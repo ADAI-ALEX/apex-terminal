@@ -6,6 +6,8 @@
 export const CONFIG_KEY = "apex:config";
 export const STATE_KEY = "apex:state";
 export const STATUS_KEY = "apex:onboarding_status";
+export const BACKTEST_REQ_KEY = "apex:backtest_request";
+export const BACKTEST_RES_KEY = "apex:backtest_result";
 
 function creds(): { url: string; token: string } | null {
   const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
