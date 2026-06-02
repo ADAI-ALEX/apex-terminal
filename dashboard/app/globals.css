@@ -15,6 +15,63 @@ body {
   font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
 }
 
+/* The terminal itself is fixed (h-screen overflow-hidden on its own root); other
+   pages (settings, login) scroll normally, so we don't force overflow globally. */
+
+/* ── React Flow theming (dark + gold, grid canvas) ── */
+.react-flow {
+  background: #0a0a0a;
+}
+.react-flow__attribution {
+  display: none;
+}
+.react-flow__controls {
+  box-shadow: none;
+  border: 1px solid #222;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.react-flow__controls-button {
+  background: #111;
+  border-bottom: 1px solid #222;
+  color: #c9a84c;
+  width: 26px;
+  height: 26px;
+}
+.react-flow__controls-button:hover {
+  background: #161616;
+}
+.react-flow__controls-button svg {
+  fill: #c9a84c;
+}
+.react-flow__node {
+  /* our widgets supply their own chrome */
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+}
+.react-flow__node.selected .apex-window {
+  outline: 1px solid #c9a84c;
+}
+.react-flow__resize-control.handle {
+  background: #c9a84c;
+  border: 1px solid #0a0a0a;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.react-flow__resize-control.line {
+  border-color: rgba(201, 168, 76, 0.35);
+}
+.widget-drag {
+  cursor: grab;
+}
+.widget-drag:active {
+  cursor: grabbing;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

@@ -1,6 +1,9 @@
 """Shared backtest request handler — used by the cloud relay (heartbeat) and the
-local state-server endpoint. Fetches historical candles via the broker, then runs
-the pure engine.
+local state-server endpoint.
+
+To avoid burning IG's limited historical-data allowance (which raises
+``ApiExceededException``), it prefers candles the engine already holds in memory
+(streamed for the active markets) before making a fresh broker request.
 """
 
 from __future__ import annotations
@@ -10,9 +13,12 @@ from loguru import logger
 from apex.backtest.engine import run_backtest
 from apex.config import MARKETS, Settings
 from apex.ig.client import Broker
+from apex.models import Candle
 
 
-def run_request(broker: Broker, settings: Settings, req: dict) -> dict:
+def run_request(
+    broker: Broker, settings: Settings, req: dict, history: dict[str, list[Candle]] | None = None
+) -> dict:
     try:
         key = str(req.get("market", "US500")).upper()
         market = MARKETS.get(key)
@@ -20,9 +26,27 @@ def run_request(broker: Broker, settings: Settings, req: dict) -> dict:
             return {"error": f"Unknown market '{key}'."}
         minutes = int(req.get("minutes", settings.heartbeat.candle_minutes_default))
         bars = max(80, min(int(req.get("bars", 500)), 1000))
-        candles = broker.candles(market.epic, minutes, bars)
+
+        # 1) Reuse in-memory candles the engine already streams (no IG allowance cost).
+        candles: list[Candle] = list((history or {}).get(key, []))
+        source = "live cache"
+        # 2) Otherwise fetch from the broker, but handle the IG allowance gracefully.
         if len(candles) < 80:
-            return {"error": "Not enough historical data returned by the broker."}
+            try:
+                candles = broker.candles(market.epic, minutes, bars)
+                source = "broker"
+            except Exception as exc:
+                if "ApiException" in type(exc).__name__ or "exceeded" in str(exc).lower():
+                    return {"error": (
+                        "IG's historical-data allowance is exhausted (ApiExceededException). "
+                        "It resets on a rolling weekly basis. Tip: backtest an instrument your "
+                        "engine is already streaming — those candles are reused for free."
+                    )}
+                return {"error": str(exc) or exc.__class__.__name__}
+
+        if len(candles) < 80:
+            return {"error": "Not enough historical data available yet — let the engine run a little, then retry."}
+
         result = run_backtest(
             candles, market,
             starting_equity=float(req.get("starting_equity", settings.starting_equity or 100_000.0)),
@@ -35,6 +59,7 @@ def run_request(broker: Broker, settings: Settings, req: dict) -> dict:
         data = result.to_dict()
         data["mode"] = broker.mode          # IG = real data, PAPER = synthetic
         data["minutes"] = minutes
+        data["source"] = source
         return data
     except Exception as exc:
         logger.exception("Backtest failed: {}", exc)

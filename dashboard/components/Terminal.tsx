@@ -1,254 +1,270 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
+import Link from "next/link";
+import ReactFlow, {
+  Background, BackgroundVariant, Controls, MiniMap,
+  applyNodeChanges, type Node, type NodeChange,
+} from "reactflow";
 import { useStream } from "./useStream";
-import { StatusBar } from "./StatusBar";
-import {
-  WIDGETS, WIDGETS_BY_ID, WIDGET_CATEGORIES, WidgetFrame, type WidgetDef,
-} from "./widgets";
+import { WidgetNode } from "./WidgetNode";
+import { TerminalContext } from "./TerminalContext";
+import { WIDGETS, WIDGETS_BY_ID, WIDGET_CATEGORIES } from "./widgets";
+import { BacktestTab } from "./BacktestTab";
+import { SignOutButton } from "./SignOutButton";
 
-const Grid = WidthProvider(GridLayout);
-const STORE_KEY = "apex.terminal.v2";
-const COLS = 12;
-const ROW_H = 26;
-
-type Instance = { key: string; widgetId: string };
-type Space = { name: string; widgets: Instance[]; layout: Layout[] };
+const STORE_KEY = "apex.terminal.v3";
+type WNode = Node<{ widgetId: string }>;
+type Space = { name: string; nodes: WNode[] };
 type Persisted = { active: number; spaces: Space[] };
 
-function defaultSpaces(): Persisted {
-  const main: Space = {
-    name: "MAIN",
-    widgets: [
-      { key: "chart", widgetId: "chart" },
-      { key: "watchlist", widgetId: "watchlist" },
-      { key: "account", widgetId: "account" },
-      { key: "positions", widgetId: "positions" },
-      { key: "log", widgetId: "log" },
-    ],
-    layout: [
-      { i: "chart", x: 0, y: 0, w: 7, h: 13, minW: 4, minH: 8 },
-      { i: "watchlist", x: 7, y: 0, w: 5, h: 6, minW: 3, minH: 4 },
-      { i: "account", x: 7, y: 6, w: 5, h: 7, minW: 3, minH: 5 },
-      { i: "positions", x: 0, y: 13, w: 7, h: 7, minW: 4, minH: 4 },
-      { i: "log", x: 7, y: 13, w: 5, h: 7, minW: 4, minH: 4 },
-    ],
+const nodeTypes = { widget: WidgetNode };
+
+function mk(widgetId: string, x: number, y: number, w: number, h: number): WNode {
+  return {
+    id: `${widgetId}-${Math.random().toString(36).slice(2, 7)}`,
+    type: "widget",
+    position: { x, y },
+    data: { widgetId },
+    style: { width: w, height: h },
+    dragHandle: ".widget-drag",
   };
-  return { active: 0, spaces: [main] };
+}
+
+function defaultSpaces(): Persisted {
+  return {
+    active: 0,
+    spaces: [{
+      name: "MAIN",
+      nodes: [
+        mk("chart", 0, 0, 760, 460),
+        mk("watchlist", 780, 0, 430, 220),
+        mk("account", 780, 240, 430, 320),
+        mk("positions", 0, 480, 760, 250),
+        mk("log", 780, 580, 430, 250),
+      ],
+    }],
+  };
 }
 
 export function Terminal() {
   const { state, status } = useStream();
-  const [data, setData] = useState<Persisted | null>(null);
+  const [view, setView] = useState<"terminal" | "backtest">("terminal");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [query, setQuery] = useState("");
-  const mounted = useRef(false);
 
-  // Load persisted workspaces on mount.
+  const [nodes, setNodes] = useState<WNode[]>([]);
+  const [active, setActive] = useState(0);
+  const [spaceNames, setSpaceNames] = useState<string[]>(["MAIN"]);
+
+  const store = useRef<Persisted | null>(null);
+  const activeRef = useRef(0);
+  const loaded = useRef(false);
+
+  // load
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORE_KEY);
-      setData(raw ? (JSON.parse(raw) as Persisted) : defaultSpaces());
-    } catch {
-      setData(defaultSpaces());
-    }
-    mounted.current = true;
+    let p: Persisted;
+    try { p = JSON.parse(localStorage.getItem(STORE_KEY) || "") as Persisted; if (!p?.spaces?.length) throw 0; }
+    catch { p = defaultSpaces(); }
+    store.current = p;
+    activeRef.current = p.active;
+    setActive(p.active);
+    setSpaceNames(p.spaces.map((s) => s.name));
+    setNodes(p.spaces[p.active].nodes);
+    loaded.current = true;
   }, []);
 
-  const persist = useCallback((next: Persisted) => {
-    setData(next);
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  // persist nodes → active space
+  useEffect(() => {
+    if (!loaded.current || !store.current) return;
+    store.current.spaces[activeRef.current].nodes = nodes;
+    store.current.active = activeRef.current;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(store.current)); } catch { /* ignore */ }
+  }, [nodes]);
+
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    setNodes((nds) => applyNodeChanges(changes, nds) as WNode[]);
   }, []);
 
-  const space = data?.spaces[data.active];
-
-  const addWidget = useCallback((widgetId: string, at?: { x: number; y: number }) => {
-    if (!data) return;
+  const addWidget = useCallback((widgetId: string) => {
     const def = WIDGETS_BY_ID[widgetId];
     if (!def) return;
-    const key = `${widgetId}-${Date.now().toString(36)}`;
-    const sp = data.spaces[data.active];
-    const item: Layout = {
-      i: key, x: at?.x ?? 0, y: at?.y ?? Infinity, w: def.w, h: def.h, minW: def.minW, minH: def.minH,
-    };
-    const next = structuredClone(data);
-    next.spaces[next.active].widgets.push({ key, widgetId });
-    next.spaces[next.active].layout.push(item);
-    persist(next);
-  }, [data, persist]);
+    if (view !== "terminal") setView("terminal");
+    setNodes((nds) => {
+      const off = (nds.length % 6) * 28;
+      return [...nds, mk(widgetId, 60 + off, 60 + off, def.w * 60, def.h * 24)];
+    });
+  }, [view]);
 
-  const removeWidget = useCallback((key: string) => {
-    if (!data) return;
-    const next = structuredClone(data);
-    const s = next.spaces[next.active];
-    s.widgets = s.widgets.filter((w) => w.key !== key);
-    s.layout = s.layout.filter((l) => l.i !== key);
-    persist(next);
-  }, [data, persist]);
+  const removeWidget = useCallback((id: string) => {
+    setNodes((nds) => nds.filter((n) => n.id !== id));
+  }, []);
 
-  const onLayoutChange = useCallback((layout: Layout[]) => {
-    if (!data || !mounted.current) return;
-    const next = structuredClone(data);
-    next.spaces[next.active].layout = layout;
-    // persist without re-render churn
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
-    setData(next);
-  }, [data]);
-
+  const switchSpace = (i: number) => {
+    if (!store.current) return;
+    store.current.spaces[activeRef.current].nodes = nodes; // save current
+    activeRef.current = i;
+    setActive(i);
+    setNodes(store.current.spaces[i].nodes);
+  };
   const addSpace = () => {
-    if (!data) return;
-    const next = structuredClone(data);
-    next.spaces.push({ name: `WS ${next.spaces.length + 1}`, widgets: [], layout: [] });
-    next.active = next.spaces.length - 1;
-    persist(next);
+    if (!store.current) return;
+    store.current.spaces[activeRef.current].nodes = nodes;
+    store.current.spaces.push({ name: `WS ${store.current.spaces.length + 1}`, nodes: [] });
+    const i = store.current.spaces.length - 1;
+    activeRef.current = i; setActive(i);
+    setSpaceNames(store.current.spaces.map((s) => s.name));
+    setNodes([]);
   };
-  const switchSpace = (i: number) => { if (data) persist({ ...data, active: i }); };
   const removeSpace = (i: number) => {
-    if (!data || data.spaces.length <= 1) return;
-    const next = structuredClone(data);
-    next.spaces.splice(i, 1);
-    next.active = Math.max(0, Math.min(next.active, next.spaces.length - 1));
-    persist(next);
+    if (!store.current || store.current.spaces.length <= 1) return;
+    store.current.spaces.splice(i, 1);
+    const ni = Math.max(0, Math.min(activeRef.current, store.current.spaces.length - 1));
+    activeRef.current = ni; setActive(ni);
+    setSpaceNames(store.current.spaces.map((s) => s.name));
+    setNodes(store.current.spaces[ni].nodes);
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(store.current)); } catch { /* ignore */ }
   };
-  const resetSpace = () => { if (data && confirm("Reset this workspace layout?")) persist(defaultSpaces()); };
+  const clearSpace = () => { if (confirm("Clear all widgets in this workspace?")) setNodes([]); };
+  const resetAll = () => {
+    if (!confirm("Reset all workspaces to default?")) return;
+    const p = defaultSpaces();
+    store.current = p; activeRef.current = 0; setActive(0);
+    setSpaceNames(p.spaces.map((s) => s.name)); setNodes(p.spaces[0].nodes);
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(p)); } catch { /* ignore */ }
+  };
 
-  const filtered = useMemo(() => {
+  const catalog = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return WIDGET_CATEGORIES;
-    return WIDGET_CATEGORIES.map((c) => ({
-      name: c.name,
-      items: c.items.filter((w) => `${w.name} ${w.code} ${w.category}`.toLowerCase().includes(q)),
-    })).filter((c) => c.items.length);
+    return WIDGET_CATEGORIES.map((c) => ({ name: c.name, items: c.items.filter((w) => `${w.name} ${w.code}`.toLowerCase().includes(q)) })).filter((c) => c.items.length);
   }, [query]);
 
-  if (!data || !space) {
-    return <div className="flex h-64 items-center justify-center font-mono text-sm text-textmid">Loading workspace…</div>;
-  }
-
   return (
-    <div className="flex h-[calc(100vh-220px)] min-h-[560px] overflow-hidden rounded-md border border-border bg-bg">
-      {/* ── Retractable sidebar ── */}
-      {sidebarOpen ? (
-        <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-bg2">
-          <div className="flex items-center justify-between border-b border-border px-3 py-2">
-            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-gold">Widgets</span>
-            <button onClick={() => setSidebarOpen(false)} title="Hide" className="px-1 font-mono text-textdim hover:text-gold">‹</button>
+    <TerminalContext.Provider value={{ state, removeWidget }}>
+      <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg text-textmid">
+        {/* ── Top bar ── */}
+        <header className="flex items-center gap-3 border-b border-border bg-bg2 px-3 py-1.5">
+          <span className="font-mono text-sm font-bold tracking-[0.25em] text-gold">APEX</span>
+          <div className="flex overflow-hidden rounded border border-border font-mono text-[10px]">
+            <button onClick={() => setView("terminal")} className={`px-3 py-1 uppercase tracking-wider ${view === "terminal" ? "bg-gold/15 text-gold" : "text-textdim hover:text-textmid"}`}>Terminal</button>
+            <button onClick={() => setView("backtest")} className={`border-l border-border px-3 py-1 uppercase tracking-wider ${view === "backtest" ? "bg-gold/15 text-gold" : "text-textdim hover:text-textmid"}`}>Backtest</button>
           </div>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search widgets…"
-            className="m-2 rounded border border-border bg-bg3 px-2 py-1.5 font-mono text-[11px] text-textmid outline-none focus:border-gold"
-          />
-          <div className="min-h-0 flex-1 overflow-y-auto pb-3">
-            {filtered.map((cat) => (
-              <div key={cat.name} className="mb-1">
-                <div className="px-3 py-1 font-mono text-[9px] uppercase tracking-[0.2em] text-textdim">{cat.name}</div>
-                {cat.items.map((w) => (
-                  <button
-                    key={w.id}
-                    draggable
-                    onDragStart={(e) => e.dataTransfer.setData("text/plain", w.id)}
-                    onClick={() => addWidget(w.id)}
-                    title={`Add ${w.name}`}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition hover:bg-bg3"
-                  >
-                    <span className="rounded bg-gold/10 px-1 py-0.5 font-mono text-[9px] text-gold">{w.code}</span>
-                    <span className="text-[12px] text-textmid">{w.name}</span>
-                    <span className="ml-auto font-mono text-[10px] text-textdim">+</span>
-                  </button>
-                ))}
-              </div>
-            ))}
-          </div>
-        </aside>
-      ) : (
-        <button
-          onClick={() => setSidebarOpen(true)}
-          title="Show widgets"
-          className="flex w-6 shrink-0 items-center justify-center border-r border-border bg-bg2 transition hover:bg-bg3"
-        >
-          <span className="font-mono text-[9px] uppercase tracking-[0.3em] text-gold" style={{ writingMode: "vertical-rl" }}>
-            › Widgets
-          </span>
-        </button>
-      )}
-
-      {/* ── Workspace ── */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* command + status */}
-        <div className="flex items-center gap-3 border-b border-border bg-bg2 px-3 py-1.5">
-          <span className="font-mono text-[11px] font-bold tracking-[0.2em] text-gold">APEX</span>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { const m = WIDGETS.find((w) => `${w.name} ${w.code}`.toLowerCase().includes(query.trim().toLowerCase())); if (m) { addWidget(m.id); setQuery(""); } } }}
-            placeholder="Command / search widgets — type & Enter"
-            className="flex-1 rounded border border-border bg-bg3 px-3 py-1 font-mono text-[11px] text-textmid outline-none focus:border-gold"
+            placeholder="COMMAND OR SEARCH WIDGETS · ENTER"
+            className="flex-1 rounded border border-border bg-bg3 px-3 py-1 font-mono text-[11px] uppercase tracking-wider text-textmid outline-none placeholder:text-textdim focus:border-gold"
           />
-          {state && <span className="hidden font-mono text-[10px] text-textdim sm:inline">{status}</span>}
-        </div>
+          <StatusDot status={status} mode={state?.mode} />
+          <Clock />
+        </header>
 
-        {state && <div className="px-3 pt-2"><StatusBar state={state} status={status} /></div>}
-
-        {/* grid */}
-        <div className="min-h-0 flex-1 overflow-auto p-2">
-          {!state ? (
-            <div className="mx-auto mt-10 max-w-md rounded-md border border-border bg-bg2 p-6 text-center">
-              <div className="mb-2 font-mono text-sm text-gold">Waiting for your trading engine…</div>
-              <p className="text-sm text-textmid">Start it on your machine (double-click <span className="text-gold">start.bat</span>) and live data fills the widgets within ~30s.</p>
-            </div>
-          ) : (
-            <Grid
-              className="layout"
-              layout={space.layout}
-              cols={COLS}
-              rowHeight={ROW_H}
-              margin={[8, 8]}
-              draggableHandle=".widget-drag"
-              isResizable
-              isDraggable
-              compactType="vertical"
-              onLayoutChange={onLayoutChange}
-              isDroppable
-              droppingItem={{ i: "__drop__", w: 5, h: 7 }}
-              onDrop={(_l: Layout[], item: any, e: any) => {
-                const id = e?.dataTransfer?.getData("text/plain");
-                if (id) addWidget(id, { x: item?.x ?? 0, y: item?.y ?? 0 });
-              }}
-            >
-              {space.widgets.map((inst) => {
-                const def: WidgetDef | undefined = WIDGETS_BY_ID[inst.widgetId];
-                if (!def) return <div key={inst.key} />;
-                return (
-                  <div key={inst.key}>
-                    <WidgetFrame code={def.code} title={def.name} onClose={() => removeWidget(inst.key)}>
-                      {def.render(state)}
-                    </WidgetFrame>
+        {/* ── Body ── */}
+        <div className="flex min-h-0 flex-1">
+          {/* Sidebar */}
+          {sidebarOpen ? (
+            <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-bg2">
+              <div className="flex items-center justify-between border-b border-border px-3 py-2">
+                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-gold">Widgets</span>
+                <button onClick={() => setSidebarOpen(false)} title="Hide sidebar" className="px-1 font-mono text-textdim hover:text-gold">‹</button>
+              </div>
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="search…" className="m-2 rounded border border-border bg-bg3 px-2 py-1.5 font-mono text-[11px] text-textmid outline-none focus:border-gold" />
+              <div className="min-h-0 flex-1 overflow-y-auto pb-2">
+                {catalog.map((cat) => (
+                  <div key={cat.name} className="mb-1">
+                    <div className="px-3 py-1 font-mono text-[9px] uppercase tracking-[0.2em] text-textdim">{cat.name}</div>
+                    {cat.items.map((w) => (
+                      <button key={w.id} onClick={() => addWidget(w.id)} title={`Add ${w.name}`} className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition hover:bg-bg3">
+                        <span className="rounded bg-gold/10 px-1 py-0.5 font-mono text-[9px] text-gold">{w.code}</span>
+                        <span className="text-[12px] text-textmid">{w.name}</span>
+                        <span className="ml-auto font-mono text-[11px] text-textdim">+</span>
+                      </button>
+                    ))}
                   </div>
-                );
-              })}
-            </Grid>
+                ))}
+              </div>
+              {/* bottom: settings + sign out */}
+              <div className="border-t border-border p-2">
+                <Link href="/settings" className="mb-2 flex items-center gap-2 rounded px-2 py-1.5 text-[12px] text-textmid transition hover:bg-bg3 hover:text-gold">
+                  <span className="rounded bg-gold/10 px-1 py-0.5 font-mono text-[9px] text-gold">SET</span> Settings
+                </Link>
+                <SignOutButton />
+              </div>
+            </aside>
+          ) : (
+            <button onClick={() => setSidebarOpen(true)} title="Show widgets" className="flex w-6 shrink-0 items-center justify-center border-r border-border bg-bg2 transition hover:bg-bg3">
+              <span className="font-mono text-[9px] uppercase tracking-[0.3em] text-gold" style={{ writingMode: "vertical-rl" }}>› Widgets</span>
+            </button>
           )}
+
+          {/* Canvas / Backtest */}
+          <main className="relative min-h-0 flex-1">
+            {view === "terminal" ? (
+              <ReactFlow
+                nodes={nodes}
+                edges={[]}
+                onNodesChange={onNodesChange}
+                nodeTypes={nodeTypes}
+                proOptions={{ hideAttribution: true }}
+                minZoom={0.25}
+                maxZoom={2}
+                fitView
+                panOnDrag
+                zoomOnScroll
+                selectionOnDrag={false}
+                deleteKeyCode={null}
+              >
+                <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#1e1e1e" />
+                <Controls showInteractive={false} />
+                <MiniMap pannable zoomable nodeColor="#c9a84c33" nodeStrokeColor="#c9a84c" maskColor="rgba(0,0,0,0.6)" style={{ background: "#0a0a0a", border: "1px solid #222" }} />
+              </ReactFlow>
+            ) : (
+              <div className="absolute inset-0 overflow-auto p-4">
+                <BacktestTab />
+              </div>
+            )}
+          </main>
         </div>
 
-        {/* workspace tabs */}
-        <div className="flex items-center gap-1 border-t border-border bg-bg2 px-2 py-1">
-          {data.spaces.map((sp, i) => (
-            <span key={i} className={`group flex items-center rounded ${i === data.active ? "bg-gold/15" : "hover:bg-bg3"}`}>
-              <button onClick={() => switchSpace(i)} className={`px-3 py-1 font-mono text-[10px] uppercase tracking-wider ${i === data.active ? "text-gold" : "text-textdim"}`}>
-                {sp.name}
-              </button>
-              {data.spaces.length > 1 && (
-                <button onClick={() => removeSpace(i)} className="px-1 font-mono text-[10px] text-textdim opacity-0 transition group-hover:opacity-100 hover:text-down">×</button>
-              )}
+        {/* ── Bottom bar ── */}
+        <footer className="flex items-center gap-1 border-t border-border bg-bg2 px-2 py-1">
+          {spaceNames.map((name, i) => (
+            <span key={i} className={`group flex items-center rounded ${i === active ? "bg-gold/15" : "hover:bg-bg3"}`}>
+              <button onClick={() => switchSpace(i)} className={`px-3 py-1 font-mono text-[10px] uppercase tracking-wider ${i === active ? "text-gold" : "text-textdim"}`}>{name}</button>
+              {spaceNames.length > 1 && <button onClick={() => removeSpace(i)} className="px-1 font-mono text-[10px] text-textdim opacity-0 transition group-hover:opacity-100 hover:text-down">×</button>}
             </span>
           ))}
-          <button onClick={addSpace} title="New workspace" className="px-2 py-1 font-mono text-[11px] text-textdim hover:text-gold">+</button>
-          <button onClick={resetSpace} title="Reset layout" className="ml-auto px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-textdim hover:text-gold">Reset</button>
-        </div>
+          <button onClick={addSpace} title="New workspace" className="px-2 py-1 font-mono text-[12px] text-textdim hover:text-gold">+</button>
+          <span className="ml-auto flex items-center gap-3 font-mono text-[10px] uppercase tracking-wider text-textdim">
+            <button onClick={clearSpace} className="hover:text-gold">Clear</button>
+            <button onClick={resetAll} className="hover:text-gold">Reset</button>
+            <span className="text-textdim/60">v1.2</span>
+          </span>
+        </footer>
       </div>
-    </div>
+    </TerminalContext.Provider>
+  );
+}
+
+function Clock() {
+  const [now, setNow] = useState<string>("");
+  useEffect(() => {
+    const tick = () => setNow(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+  return <span className="font-mono text-[12px] tabular-nums text-gold">{now}</span>;
+}
+
+function StatusDot({ status, mode }: { status: string; mode?: string }) {
+  const live = status === "live";
+  return (
+    <span className="hidden items-center gap-1.5 font-mono text-[10px] text-textdim sm:flex">
+      <span className={`h-1.5 w-1.5 rounded-full ${live ? "bg-up" : "bg-down"}`} />
+      {mode ?? "—"}
+    </span>
   );
 }
