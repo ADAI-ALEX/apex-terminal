@@ -37,16 +37,21 @@ export function LiveChart({ state }: { state: AlgoState }) {
 
   useEffect(() => {
     let disposed = false;
+    let ro: ResizeObserver | null = null;
     (async () => {
       const lib = await import("lightweight-charts");
       if (disposed || !containerRef.current) return;
-      const chart = lib.createChart(containerRef.current, {
-        autoSize: true,
+      const el = containerRef.current;
+      const chart = lib.createChart(el, {
+        width: el.clientWidth || 300,
+        height: el.clientHeight || 200,
         layout: { background: { color: "#0a0a0a" }, textColor: "#999" },
         grid: { vertLines: { color: "#161616" }, horzLines: { color: "#161616" } },
         timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#222" },
         rightPriceScale: { borderColor: "#222" },
         crosshair: { mode: 0 },
+        handleScroll: true,
+        handleScale: true,
       });
       candleRef.current = chart.addCandlestickSeries({
         upColor: "#22c55e", downColor: "#ef4444", borderVisible: false,
@@ -54,9 +59,16 @@ export function LiveChart({ state }: { state: AlgoState }) {
       });
       lineRef.current = chart.addLineSeries({ color: "#e8c97a", lineWidth: 2 });
       chartRef.current = chart;
+      // Explicit resize → reliably fills the widget when it's resized / zoomed.
+      ro = new ResizeObserver(() => {
+        const w = el.clientWidth, h = el.clientHeight;
+        if (w > 0 && h > 0) chart.resize(w, h);
+      });
+      ro.observe(el);
     })();
     return () => {
       disposed = true;
+      ro?.disconnect();
       chartRef.current?.remove();
       chartRef.current = null;
       candleRef.current = null;
