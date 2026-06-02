@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Dashboard } from "./Dashboard";
+import { Terminal } from "./Terminal";
 import { BacktestTab } from "./BacktestTab";
 
 type Tab = "terminal" | "backtest";
@@ -19,7 +19,7 @@ export function Workspace() {
         <TopTab active={tab === "terminal"} onClick={() => setTab("terminal")}>Terminal</TopTab>
         <TopTab active={tab === "backtest"} onClick={() => setTab("backtest")}>Backtest</TopTab>
       </nav>
-      {tab === "terminal" ? <Dashboard /> : <BacktestTab />}
+      {tab === "terminal" ? <Terminal /> : <BacktestTab />}
     </div>
   );
 }

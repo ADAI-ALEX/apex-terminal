@@ -1,31 +1,21 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+type Candle = { time: number; open: number; high: number; low: number; close: number };
+type EqPoint = { time: number; equity: number };
+type Trade = { direction: string; entry: number; exit: number; pnl: number; ret_pct: number; reason: string; strategy: string; opened: string; closed: string };
 type Result = {
-  error?: string;
-  pending?: boolean;
-  mode?: string;
-  market?: string;
-  bars?: number;
-  minutes?: number;
-  starting_equity?: number;
-  final_equity?: number;
-  total_return_pct?: number;
-  trades?: number;
-  win_rate?: number;
-  profit_factor?: number;
-  avg_rr?: number;
-  expectancy_pct?: number;
-  max_daily_dd_pct?: number;
-  max_total_dd_pct?: number;
-  equity_curve?: { time: number; equity: number }[];
-  trade_log?: { market: string; direction: string; entry: number; exit: number; pnl: number; ret_pct: number; reason: string; strategy: string; closed: string }[];
-  monte_carlo?: Record<string, number | string>;
+  error?: string; pending?: boolean; mode?: string; market?: string; bars?: number; minutes?: number;
+  starting_equity?: number; final_equity?: number; total_return_pct?: number; trades?: number;
+  win_rate?: number; profit_factor?: number; avg_rr?: number; expectancy_pct?: number;
+  max_daily_dd_pct?: number; max_total_dd_pct?: number;
+  equity_curve?: EqPoint[]; candles?: Candle[]; trade_log?: Trade[]; monte_carlo?: Record<string, number | string>;
 };
 
 const MARKETS = ["US500", "NAS100", "EURUSD", "GBPUSD", "FTSE100", "DAX40"];
 const TIMEFRAMES: [number, string][] = [[5, "5m"], [15, "15m"], [30, "30m"], [60, "1h"]];
+const SPEEDS: [number, string][] = [[1, "1×"], [3, "3×"], [8, "8×"], [20, "20×"]];
 
 export function BacktestTab() {
   const [market, setMarket] = useState("US500");
@@ -33,91 +23,137 @@ export function BacktestTab() {
   const [bars, setBars] = useState(500);
   const [riskPct, setRiskPct] = useState(0.4);
   const [running, setRunning] = useState(false);
-  const [status, setStatus] = useState("");
+  const [statusMsg, setStatusMsg] = useState("");
   const [result, setResult] = useState<Result | null>(null);
 
+  // Replay state
+  const [idx, setIdx] = useState(0);     // candles revealed
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(3);
+
+  const candles = result?.candles ?? [];
+  const equity = result?.equity_curve ?? [];
+  const trades = result?.trade_log ?? [];
+  const startEq = result?.starting_equity ?? 100_000;
+
   async function run() {
-    setRunning(true);
-    setResult(null);
-    setStatus("Submitting backtest…");
+    setRunning(true); setResult(null); setIdx(0); setPlaying(false);
+    setStatusMsg("Submitting backtest…");
     try {
       const res = await fetch("/api/backtest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ market, minutes, bars, risk_pct: riskPct, target_pct: 10, total_limit_pct: 10 }),
       });
       const data = (await res.json()) as Result & { id?: string; queued?: boolean };
-
       if (data.queued && data.id) {
-        // Cloud relay: poll for the laptop's result.
-        setStatus("Running on your engine (real data)…");
+        setStatusMsg("Running on your engine (real data)…");
         const deadline = Date.now() + 120_000;
         while (Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, 2500));
           const poll = await fetch(`/api/backtest?id=${data.id}`, { cache: "no-store" });
           const pj = (await poll.json()) as Result;
-          if (!pj.pending) { finish(pj); return; }
-          setStatus("Running on your engine (real data)…");
+          if (!pj.pending) return finish(pj);
         }
-        setStatus("Timed out — is the engine running (start.bat)?");
-        setRunning(false);
-        return;
+        setStatusMsg("Timed out — is the engine running (start.bat)?"); setRunning(false); return;
       }
-      finish(data); // local synchronous result
-    } catch (e) {
-      setStatus("Request failed.");
-      setRunning(false);
-    }
+      finish(data);
+    } catch { setStatusMsg("Request failed."); setRunning(false); }
   }
 
   function finish(r: Result) {
-    setRunning(false);
-    setStatus("");
+    setRunning(false); setStatusMsg("");
     setResult(r);
+    if (!r.error && (r.candles?.length ?? 0) > 0) { setIdx(0); setPlaying(true); }
   }
+
+  // Replay ticker.
+  useEffect(() => {
+    if (!playing || candles.length === 0) return;
+    const id = setInterval(() => {
+      setIdx((i) => {
+        const next = i + speed;
+        if (next >= candles.length) { setPlaying(false); return candles.length; }
+        return next;
+      });
+    }, 80);
+    return () => clearInterval(id);
+  }, [playing, speed, candles.length]);
+
+  // Live metrics up to the current replay point.
+  const live = useMemo(() => {
+    if (!candles.length) return null;
+    const cut = candles[Math.max(0, Math.min(idx, candles.length) - 1)]?.time ?? 0;
+    const eqShown = equity.filter((p) => p.time <= cut);
+    const lastEq = eqShown.length ? eqShown[eqShown.length - 1].equity : startEq;
+    let peak = startEq, maxDD = 0;
+    for (const p of eqShown) { peak = Math.max(peak, p.equity); maxDD = Math.max(maxDD, peak > 0 ? (100 * (peak - p.equity)) / peak : 0); }
+    const done = trades.filter((t) => new Date(t.closed).getTime() / 1000 <= cut);
+    const wins = done.filter((t) => t.pnl >= 0).length;
+    return {
+      bar: Math.min(idx, candles.length), total: candles.length,
+      date: cut ? new Date(cut * 1000).toLocaleString() : "—",
+      ret: (100 * (lastEq - startEq)) / startEq, equity: lastEq,
+      maxDD, trades: done.length, winRate: done.length ? (100 * wins) / done.length : 0,
+    };
+  }, [idx, candles, equity, trades, startEq]);
 
   return (
     <div className="space-y-4">
       {/* Controls */}
       <div className="rounded-md border border-border bg-bg2 p-4">
-        <div className="mb-3 font-mono text-[10px] uppercase tracking-wider text-gold">// Backtest — strategy book on historical data</div>
+        <div className="mb-3 font-mono text-[10px] uppercase tracking-wider text-gold">// Backtest — replay the strategy book on historical data</div>
         <div className="flex flex-wrap items-end gap-3">
-          <Field label="Instrument">
-            <Select value={market} onChange={setMarket} options={MARKETS.map((m) => [m, m])} />
-          </Field>
-          <Field label="Timeframe">
-            <Select value={String(minutes)} onChange={(v) => setMinutes(Number(v))} options={TIMEFRAMES.map(([v, l]) => [String(v), l])} />
-          </Field>
-          <Field label="Bars">
-            <NumberInput value={bars} onChange={setBars} step={50} />
-          </Field>
-          <Field label="Risk %/trade">
-            <NumberInput value={riskPct} onChange={setRiskPct} step={0.1} />
-          </Field>
-          <button
-            onClick={run}
-            disabled={running}
-            className="rounded bg-gold px-6 py-2 text-sm font-bold text-black transition hover:bg-gold2 disabled:opacity-50"
-          >
+          <Field label="Instrument"><Select value={market} onChange={setMarket} options={MARKETS.map((m) => [m, m])} /></Field>
+          <Field label="Timeframe"><Select value={String(minutes)} onChange={(v) => setMinutes(Number(v))} options={TIMEFRAMES.map(([v, l]) => [String(v), l])} /></Field>
+          <Field label="Bars"><NumberInput value={bars} onChange={setBars} step={50} /></Field>
+          <Field label="Risk %/trade"><NumberInput value={riskPct} onChange={setRiskPct} step={0.1} /></Field>
+          <button onClick={run} disabled={running} className="rounded bg-gold px-6 py-2 text-sm font-bold text-black transition hover:bg-gold2 disabled:opacity-50">
             {running ? "Running…" : "Run backtest"}
           </button>
-          {status && <span className="font-mono text-xs text-textmid">{status}</span>}
+          {statusMsg && <span className="font-mono text-xs text-textmid">{statusMsg}</span>}
         </div>
       </div>
 
-      {result?.error && (
-        <div className="rounded-md border border-down/40 bg-down/10 px-4 py-3 text-sm text-down">{result.error}</div>
-      )}
+      {result?.error && <div className="rounded-md border border-down/40 bg-down/10 px-4 py-3 text-sm text-down">{result.error}</div>}
 
       {result && !result.error && (
         <>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <span className="font-mono text-sm text-textmid">{result.market} · {result.minutes}m · {result.bars} bars</span>
             <span className={`rounded px-2 py-0.5 font-mono text-[10px] ${result.mode === "IG" ? "bg-up/10 text-up" : "bg-info/10 text-info"}`}>
               {result.mode === "IG" ? "REAL IG DATA" : "SIMULATED DATA"}
             </span>
           </div>
 
+          {/* Replay controls + live metrics */}
+          {candles.length > 0 && live && (
+            <div className="rounded-md border border-border bg-bg2 p-3">
+              <div className="mb-2 flex flex-wrap items-center gap-3">
+                <button onClick={() => { if (idx >= candles.length) setIdx(0); setPlaying((p) => !p); }} className="rounded bg-gold px-4 py-1.5 text-sm font-bold text-black hover:bg-gold2">
+                  {playing ? "⏸ Pause" : idx >= candles.length ? "↻ Replay" : "▶ Play"}
+                </button>
+                <div className="flex overflow-hidden rounded border border-border font-mono text-[10px]">
+                  {SPEEDS.map(([v, l]) => (
+                    <button key={v} onClick={() => setSpeed(v)} className={`px-2 py-1 ${speed === v ? "bg-gold/15 text-gold" : "text-textmid hover:text-gold"}`}>{l}</button>
+                  ))}
+                </div>
+                <input type="range" min={0} max={candles.length} value={idx} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="flex-1 accent-gold" />
+                <span className="font-mono text-[11px] text-textdim">bar {live.bar}/{live.total}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+                <Live label="Time" value={live.date} small />
+                <Live label="Equity" value={`£${live.equity.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} />
+                <Live label="Return" value={`${live.ret >= 0 ? "+" : ""}${live.ret.toFixed(2)}%`} tone={live.ret >= 0 ? "up" : "down"} />
+                <Live label="Max DD" value={`${live.maxDD.toFixed(2)}%`} tone="down" />
+                <Live label="Trades" value={String(live.trades)} />
+                <Live label="Win rate" value={`${live.winRate.toFixed(0)}%`} />
+              </div>
+            </div>
+          )}
+
+          <ReplayCharts candles={candles} equity={equity} trades={trades} idx={idx} />
+
+          {/* Final summary */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Stat label="Total return" value={pct(result.total_return_pct)} tone={(result.total_return_pct ?? 0) >= 0 ? "up" : "down"} />
             <Stat label="Trades" value={String(result.trades ?? 0)} />
@@ -128,8 +164,6 @@ export function BacktestTab() {
             <Stat label="Max daily DD" value={`${result.max_daily_dd_pct ?? 0}%`} tone="down" />
             <Stat label="Max total DD" value={`${result.max_total_dd_pct ?? 0}%`} tone="down" />
           </div>
-
-          <EquityChart points={result.equity_curve ?? []} />
 
           {result.monte_carlo && Number(result.monte_carlo.runs ?? 0) > 0 && (
             <div className="rounded-md border border-border bg-bg2 p-4">
@@ -145,130 +179,90 @@ export function BacktestTab() {
               </div>
             </div>
           )}
-
-          <TradeLog trades={result.trade_log ?? []} />
         </>
       )}
 
       {!result && !running && (
         <div className="rounded-md border border-border bg-bg2 p-8 text-center font-mono text-xs text-textdim">
-          Pick an instrument and run a backtest. Results use real IG history when your
-          engine is connected to IG; otherwise simulated data.
+          Pick an instrument and run a backtest. It replays the strategy bar-by-bar with live equity and metrics.
+          Real IG history when your engine is connected; otherwise simulated.
         </div>
       )}
     </div>
   );
 }
 
-function EquityChart({ points }: { points: { time: number; equity: number }[] }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<any>(null);
-  const seriesRef = useRef<any>(null);
+/** Candle chart + equity area that reveal up to `idx`. */
+function ReplayCharts({ candles, equity, trades, idx }: { candles: Candle[]; equity: EqPoint[]; trades: Trade[]; idx: number }) {
+  const priceRef = useRef<HTMLDivElement>(null);
+  const eqRef = useRef<HTMLDivElement>(null);
+  const priceChart = useRef<any>(null);
+  const candleSeries = useRef<any>(null);
+  const eqChart = useRef<any>(null);
+  const eqSeries = useRef<any>(null);
 
   useEffect(() => {
     let disposed = false;
     (async () => {
       const lib = await import("lightweight-charts");
-      if (disposed || !ref.current) return;
-      const chart = lib.createChart(ref.current, {
-        autoSize: true,
-        layout: { background: { color: "#0a0a0a" }, textColor: "#999" },
-        grid: { vertLines: { color: "#161616" }, horzLines: { color: "#161616" } },
-        timeScale: { timeVisible: true, borderColor: "#222" },
-        rightPriceScale: { borderColor: "#222" },
-      });
-      seriesRef.current = chart.addAreaSeries({ lineColor: "#c9a84c", topColor: "rgba(201,168,76,0.25)", bottomColor: "rgba(201,168,76,0.02)", lineWidth: 2 });
-      chartRef.current = chart;
-      pushData();
+      const base = { layout: { background: { color: "#0a0a0a" }, textColor: "#999" }, grid: { vertLines: { color: "#161616" }, horzLines: { color: "#161616" } }, timeScale: { timeVisible: true, borderColor: "#222" }, rightPriceScale: { borderColor: "#222" }, autoSize: true } as any;
+      if (!disposed && priceRef.current) {
+        const c = lib.createChart(priceRef.current, base);
+        candleSeries.current = c.addCandlestickSeries({ upColor: "#22c55e", downColor: "#ef4444", borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444" });
+        priceChart.current = c;
+      }
+      if (!disposed && eqRef.current) {
+        const c = lib.createChart(eqRef.current, base);
+        eqSeries.current = c.addAreaSeries({ lineColor: "#c9a84c", topColor: "rgba(201,168,76,0.25)", bottomColor: "rgba(201,168,76,0.02)", lineWidth: 2 });
+        eqChart.current = c;
+      }
     })();
-    return () => { disposed = true; chartRef.current?.remove(); chartRef.current = null; seriesRef.current = null; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { disposed = true; priceChart.current?.remove(); eqChart.current?.remove(); priceChart.current = eqChart.current = candleSeries.current = eqSeries.current = null; };
   }, []);
 
-  function pushData() {
-    const s = seriesRef.current;
-    if (!s) return;
-    const seen = new Set<number>();
-    const rows = [...points].sort((a, b) => a.time - b.time).filter((p) => (seen.has(p.time) ? false : (seen.add(p.time), true)));
-    s.setData(rows.map((p) => ({ time: p.time, value: p.equity })));
-    chartRef.current?.timeScale().fitContent();
-  }
-  useEffect(() => { pushData(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [points]);
+  useEffect(() => {
+    const cs = candleSeries.current, es = eqSeries.current;
+    if (!cs || !es) return;
+    const dedupe = <T extends { time: number }>(rows: T[]) => { const seen = new Set<number>(); return [...rows].sort((a, b) => a.time - b.time).filter((r) => (seen.has(r.time) ? false : (seen.add(r.time), true))); };
+    const shownC = dedupe(candles.slice(0, Math.max(1, idx)));
+    cs.setData(shownC);
+    const cut = shownC.length ? shownC[shownC.length - 1].time : 0;
+    es.setData(dedupe(equity.filter((p) => p.time <= cut)).map((p) => ({ time: p.time, value: p.equity })));
+    // trade markers up to cut
+    const markers = trades
+      .filter((t) => new Date(t.closed).getTime() / 1000 <= cut)
+      .map((t) => ({ time: Math.floor(new Date(t.closed).getTime() / 1000), position: t.pnl >= 0 ? "belowBar" : "aboveBar", color: t.pnl >= 0 ? "#22c55e" : "#ef4444", shape: t.pnl >= 0 ? "arrowUp" : "arrowDown", text: `${t.pnl >= 0 ? "+" : ""}${t.pnl}` }));
+    try { cs.setMarkers(markers as any); } catch { /* ignore */ }
+  }, [idx, candles, equity, trades]);
 
   return (
-    <div className="rounded-md border border-border bg-bg2">
-      <div className="border-b border-border px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-gold">// Equity curve</div>
-      <div ref={ref} className="h-[300px] w-full" />
-    </div>
-  );
-}
-
-function TradeLog({ trades }: { trades: Result["trade_log"] }) {
-  const list = trades ?? [];
-  return (
-    <div className="rounded-md border border-border bg-bg2">
-      <div className="border-b border-border px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-gold">// Trades ({list.length})</div>
-      <div className="max-h-[300px] overflow-y-auto">
-        <table className="w-full font-mono text-[11px]">
-          <thead className="sticky top-0 bg-bg2 text-textdim">
-            <tr className="border-b border-border">
-              <th className="px-3 py-1.5 text-left">Closed</th><th className="text-left">Dir</th>
-              <th className="text-right">Entry</th><th className="text-right">Exit</th>
-              <th className="text-right">P&amp;L</th><th className="text-right">Ret</th>
-              <th className="text-left">Why</th><th className="text-left">Strategy</th>
-            </tr>
-          </thead>
-          <tbody>
-            {list.length === 0 ? (
-              <tr><td colSpan={8} className="px-3 py-3 text-center text-textdim">No trades in this window.</td></tr>
-            ) : list.slice().reverse().map((t, i) => (
-              <tr key={i} className="border-b border-border/50">
-                <td className="px-3 py-1 text-textdim">{new Date(t.closed).toLocaleDateString()}</td>
-                <td className={t.direction === "BUY" ? "text-up" : "text-down"}>{t.direction}</td>
-                <td className="text-right text-textmid">{t.entry}</td>
-                <td className="text-right text-textmid">{t.exit}</td>
-                <td className={`text-right ${t.pnl >= 0 ? "text-up" : "text-down"}`}>{t.pnl}</td>
-                <td className={`text-right ${t.ret_pct >= 0 ? "text-up" : "text-down"}`}>{t.ret_pct}%</td>
-                <td className="text-textdim">{t.reason}</td>
-                <td className="text-textmid">{t.strategy}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      <div className="rounded-md border border-border bg-bg2">
+        <div className="border-b border-border px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-gold">// Price (with trade markers)</div>
+        <div ref={priceRef} className="h-[280px] w-full" />
+      </div>
+      <div className="rounded-md border border-border bg-bg2">
+        <div className="border-b border-border px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-gold">// Equity curve</div>
+        <div ref={eqRef} className="h-[280px] w-full" />
       </div>
     </div>
   );
 }
 
-// ── small helpers ──────────────────────────────────────────────────────
+// ── helpers ─────────────────────────────────────────────────────────────
 function pct(v?: number) { return `${(v ?? 0) >= 0 ? "+" : ""}${v ?? 0}%`; }
-
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <div className="mb-1 font-mono text-[9px] uppercase tracking-wider text-textdim">{label}</div>
-      {children}
-    </div>
-  );
+  return <div><div className="mb-1 font-mono text-[9px] uppercase tracking-wider text-textdim">{label}</div>{children}</div>;
 }
 function Select({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: [string, string][] }) {
-  return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className="rounded border border-border bg-bg3 px-3 py-2 text-sm outline-none focus:border-gold">
-      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-    </select>
-  );
+  return <select value={value} onChange={(e) => onChange(e.target.value)} className="rounded border border-border bg-bg3 px-3 py-2 text-sm outline-none focus:border-gold">{options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>;
 }
 function NumberInput({ value, onChange, step }: { value: number; onChange: (v: number) => void; step: number }) {
-  return (
-    <input type="number" step={step} value={value} onChange={(e) => onChange(Number(e.target.value))}
-      className="w-24 rounded border border-border bg-bg3 px-3 py-2 text-sm outline-none focus:border-gold" />
-  );
+  return <input type="number" step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} className="w-24 rounded border border-border bg-bg3 px-3 py-2 text-sm outline-none focus:border-gold" />;
 }
 function Stat({ label, value, tone }: { label: string; value: string; tone?: "up" | "down" }) {
-  return (
-    <div className="rounded border border-border bg-bg3 px-3 py-2">
-      <div className="font-mono text-[9px] uppercase tracking-wider text-textdim">{label}</div>
-      <div className={`mt-0.5 text-lg font-bold ${tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-gold"}`}>{value}</div>
-    </div>
-  );
+  return <div className="rounded border border-border bg-bg3 px-3 py-2"><div className="font-mono text-[9px] uppercase tracking-wider text-textdim">{label}</div><div className={`mt-0.5 text-lg font-bold ${tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-gold"}`}>{value}</div></div>;
+}
+function Live({ label, value, tone, small }: { label: string; value: string; tone?: "up" | "down"; small?: boolean }) {
+  return <div className="rounded border border-border bg-bg3 px-2 py-1.5"><div className="font-mono text-[8px] uppercase tracking-wider text-textdim">{label}</div><div className={`mt-0.5 font-bold ${small ? "text-[10px]" : "text-sm"} ${tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-textmid"}`}>{value}</div></div>;
 }
