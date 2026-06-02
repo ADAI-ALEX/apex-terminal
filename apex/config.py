@@ -212,7 +212,7 @@ class HeartbeatParams:
     tier3_portfolio_seconds: int = 1800
     health_seconds: int = 300
     candle_minutes_default: int = 5
-    history_candles: int = 200   # how many candles to keep in memory per instrument
+    history_candles: int = 450   # how many candles to keep in memory per instrument (chart depth)
 
 
 # ──────────────────────────────────────────────────────────────────────────

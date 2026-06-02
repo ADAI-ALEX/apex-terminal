@@ -52,6 +52,7 @@ class BacktestResult:
     max_daily_dd_pct: float
     max_total_dd_pct: float
     equity_curve: list[dict] = field(default_factory=list)   # [{time, equity}]
+    candles: list[dict] = field(default_factory=list)        # OHLC used (for live replay)
     trade_log: list[dict] = field(default_factory=list)
     monte_carlo: dict = field(default_factory=dict)
 
@@ -197,8 +198,13 @@ def run_backtest(
         expectancy_pct=expectancy_pct,
         max_daily_dd_pct=round(max_daily_dd, 2),
         max_total_dd_pct=round(max_total_dd, 2),
-        equity_curve=_downsample(equity_curve, 400),
-        trade_log=trade_log[-100:],
+        equity_curve=_downsample(equity_curve, 600),
+        candles=[
+            {"time": int(c.time.timestamp()), "open": round(c.open, 5), "high": round(c.high, 5),
+             "low": round(c.low, 5), "close": round(c.close, 5)}
+            for c in candles
+        ],
+        trade_log=trade_log[-200:],
         monte_carlo=_monte_carlo(trade_rets, starting_equity, mc_runs, target_pct, total_limit_pct, seed),
     )
 

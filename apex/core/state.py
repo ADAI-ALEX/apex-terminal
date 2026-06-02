@@ -40,6 +40,7 @@ class SharedState:
             "calls": 0, "input_tokens": 0, "output_tokens": 0, "est_cost_usd": 0.0,
         }
         self.candles: dict[str, list[dict[str, Any]]] = {}   # market_key -> OHLC for the chart
+        self.markets: list[str] = []                         # active instrument keys (from settings)
 
     def update(self, **fields: Any) -> None:
         with self._lock:
@@ -84,6 +85,7 @@ class SharedState:
                 "ai_enabled": self.ai_enabled,
                 "claude_usage": self.claude_usage,
                 "candles": self.candles,
+                "markets": self.markets,
                 "last_heartbeat": self.last_heartbeat.isoformat(),
                 "logs": recent_logs(50),
                 "server_time": datetime.now(timezone.utc).isoformat(),

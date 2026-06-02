@@ -77,7 +77,8 @@ class Heartbeat:
         # can fix their credentials in Settings.
         await asyncio.to_thread(self._activate_broker_sync, self.broker)
         STATE.update(status=self.broker.mode, mode=self.broker.mode,
-                     trading_enabled=self.s.trading_enabled, broker_error=self._broker_error)
+                     trading_enabled=self.s.trading_enabled, broker_error=self._broker_error,
+                     markets=[m.key for m in self.markets])
         try:
             await self._seed_history()
             await self._sync_positions()
@@ -173,7 +174,7 @@ class Heartbeat:
         self._push_state()
 
     @staticmethod
-    def _candle_view(candles: list[Candle], limit: int = 150) -> list[dict]:
+    def _candle_view(candles: list[Candle], limit: int = 400) -> list[dict]:
         """Compact OHLC slice for the dashboard chart (epoch seconds + OHLC)."""
         return [
             {
@@ -481,6 +482,7 @@ class Heartbeat:
             breakers=self._breaker_state(),
             broker_error=self._broker_error,
             ai_enabled=self.s.ai_enabled,
+            markets=[m.key for m in self.markets],
         )
 
     def _breaker_state(self) -> dict[str, bool]:
