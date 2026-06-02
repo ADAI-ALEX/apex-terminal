@@ -46,31 +46,36 @@ body {
 /* The terminal itself is fixed (h-screen overflow-hidden on its own root); other
    pages (settings, login) scroll normally, so we don't force overflow globally. */
 
-/* ── React Flow theming (dark + gold, grid canvas) ── */
+/* ── React Flow theming (follows the active theme) ── */
 .react-flow {
-  background: #0a0a0a;
+  background: rgb(var(--c-bg));
 }
 .react-flow__attribution {
   display: none;
 }
 .react-flow__controls {
   box-shadow: none;
-  border: 1px solid #222;
+  border: 1px solid rgb(var(--c-border));
   border-radius: 6px;
   overflow: hidden;
 }
 .react-flow__controls-button {
-  background: #111;
-  border-bottom: 1px solid #222;
-  color: #c9a84c;
+  background: rgb(var(--c-bg2));
+  border-bottom: 1px solid rgb(var(--c-border));
+  color: rgb(var(--c-gold));
   width: 26px;
   height: 26px;
 }
 .react-flow__controls-button:hover {
-  background: #161616;
+  background: rgb(var(--c-bg3));
 }
 .react-flow__controls-button svg {
-  fill: #c9a84c;
+  fill: rgb(var(--c-gold));
+}
+.react-flow__minimap {
+  background: rgb(var(--c-bg)) !important;
+  border: 1px solid rgb(var(--c-border));
+  border-radius: 6px;
 }
 .react-flow__node {
   /* our widgets supply their own chrome */

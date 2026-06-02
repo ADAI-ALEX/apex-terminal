@@ -16,8 +16,10 @@ import { ThemeToggle } from "./ThemeToggle";
 
 const STORE_KEY = "apex.terminal.v3";
 type WNode = Node<{ widgetId: string }>;
-type Space = { name: string; nodes: WNode[] };
+type DockState = { left?: string; right?: string; leftW: number; rightW: number };
+type Space = { name: string; nodes: WNode[]; dock?: DockState };
 type Persisted = { active: number; spaces: Space[] };
+const DEFAULT_DOCK: DockState = { leftW: 42, rightW: 42 };
 
 const nodeTypes = { widget: WidgetNode };
 
@@ -57,17 +59,33 @@ export function Terminal() {
   const [nodes, setNodes] = useState<WNode[]>([]);
   const [active, setActive] = useState(0);
   const [spaceNames, setSpaceNames] = useState<string[]>(["MAIN"]);
+  const [dock, setDock] = useState<DockState>(DEFAULT_DOCK);
+  const [snapZone, setSnapZone] = useState<"left" | "right" | null>(null);
 
   const store = useRef<Persisted | null>(null);
   const activeRef = useRef(0);
   const loaded = useRef(false);
   const rfRef = useRef<any>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
+  const nodesRef = useRef<WNode[]>([]);
+  nodesRef.current = nodes;
+  const zoneRef = useRef<{ candidate: "left" | "right" | null; timer: ReturnType<typeof setTimeout> | null }>({ candidate: null, timer: null });
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [maximizedId, setMaximizedId] = useState<string | null>(null);
   const [interacting, setInteracting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [renaming, setRenaming] = useState<{ i: number; value: string } | null>(null);
+  const [light, setLight] = useState(false);
+
+  // Track the active theme so the canvas grid recolours with Dark/Light.
+  useEffect(() => {
+    const read = () => setLight(typeof document !== "undefined" && document.documentElement.classList.contains("theme-light"));
+    read();
+    window.addEventListener("apex-theme", read);
+    return () => window.removeEventListener("apex-theme", read);
+  }, []);
+  const grid = light ? { lines: "#d6d6ce", dots: "#c2c2b8" } : { lines: "#1a1a1a", dots: "#242424" };
 
   // load
   useEffect(() => {
@@ -79,16 +97,20 @@ export function Terminal() {
     setActive(p.active);
     setSpaceNames(p.spaces.map((s) => s.name));
     setNodes(p.spaces[p.active].nodes);
+    setDock(p.spaces[p.active].dock ?? DEFAULT_DOCK);
     loaded.current = true;
   }, []);
 
-  // persist nodes → active space
+  const saveStore = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(store.current)); } catch { /* ignore */ } };
+
+  // persist nodes + dock → active space
   useEffect(() => {
     if (!loaded.current || !store.current) return;
     store.current.spaces[activeRef.current].nodes = nodes;
+    store.current.spaces[activeRef.current].dock = dock;
     store.current.active = activeRef.current;
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(store.current)); } catch { /* ignore */ }
-  }, [nodes]);
+    saveStore();
+  }, [nodes, dock]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     setNodes((nds) => applyNodeChanges(changes, nds) as WNode[]);
@@ -124,6 +146,84 @@ export function Terminal() {
     setNodes((nds) => [...nds, mk(widgetId, pos.x, pos.y, def.w * 60, def.h * 24)]);
   }, []);
 
+  // ── Docking (Windows-style edge snap) ──────────────────────────────
+  const dockNode = useCallback((id: string, side: "left" | "right") => {
+    const n = nodesRef.current.find((x) => x.id === id);
+    if (!n) return;
+    setDock((d) => ({ ...d, [side]: n.data.widgetId }));
+    setNodes((nds) => nds.filter((x) => x.id !== id));
+  }, []);
+
+  const undock = useCallback((side: "left" | "right") => {
+    setDock((d) => {
+      const widgetId = d[side];
+      if (widgetId) addWidget(widgetId);
+      return { ...d, [side]: undefined };
+    });
+  }, [addWidget]);
+
+  // While dragging a node, detect proximity to the left/right edge; after a short
+  // hold show the snap preview. Release in the zone → dock that side.
+  const onNodeDrag = useCallback((e: React.MouseEvent) => {
+    const rect = mainRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const EDGE = 60;
+    const x = (e as any).clientX ?? 0;
+    let z: "left" | "right" | null = null;
+    if (x <= rect.left + EDGE) z = "left";
+    else if (x >= rect.right - EDGE) z = "right";
+    if (z !== zoneRef.current.candidate) {
+      zoneRef.current.candidate = z;
+      if (zoneRef.current.timer) { clearTimeout(zoneRef.current.timer); zoneRef.current.timer = null; }
+      setSnapZone(null);
+      if (z) zoneRef.current.timer = setTimeout(() => setSnapZone(z), 450);
+    }
+  }, []);
+
+  const onNodeDragStop = useCallback((_e: React.MouseEvent, node: Node) => {
+    clearHide(); setInteracting(false);
+    if (zoneRef.current.timer) { clearTimeout(zoneRef.current.timer); zoneRef.current.timer = null; }
+    setSnapZone((z) => { if (z) dockNode(node.id, z); return null; });
+    zoneRef.current.candidate = null;
+  }, [dockNode]);
+
+  const startDockResize = (side: "left" | "right") => (e: React.MouseEvent) => {
+    e.preventDefault();
+    const rect = mainRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const onMove = (ev: MouseEvent) => {
+      const pct = side === "left"
+        ? ((ev.clientX - rect.left) / rect.width) * 100
+        : ((rect.right - ev.clientX) / rect.width) * 100;
+      setDock((d) => ({ ...d, [side === "left" ? "leftW" : "rightW"]: Math.min(82, Math.max(18, pct)) }));
+    };
+    const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const dockPanel = (side: "left" | "right") => {
+    const widgetId = dock[side];
+    if (!widgetId) return null;
+    const def = WIDGETS_BY_ID[widgetId];
+    if (!def) return null;
+    const w = side === "left" ? dock.leftW : dock.rightW;
+    return (
+      <div className={`absolute top-0 bottom-0 z-20 p-1.5 ${side === "left" ? "left-0" : "right-0"}`} style={{ width: `${w}%` }}>
+        <div className="apex-window h-full w-full">
+          <WidgetFrame code={def.code} title={`${def.name} · docked`} onClose={() => undock(side)}>
+            {state ? def.render(state) : <div className="flex h-full items-center justify-center font-mono text-[11px] text-textdim">waiting for engine…</div>}
+          </WidgetFrame>
+        </div>
+        <div
+          onMouseDown={startDockResize(side)}
+          title="Drag to resize"
+          className={`absolute top-0 bottom-0 w-1.5 cursor-col-resize bg-transparent transition hover:bg-gold/50 ${side === "left" ? "right-0" : "left-0"}`}
+        />
+      </div>
+    );
+  };
+
   // MiniMap visibility: pan (drag) hides instantly on release; zoom (wheel) lingers 0.25s.
   const clearHide = () => { if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; } };
   const startInteract = useCallback(() => { clearHide(); setInteracting(true); }, []);
@@ -133,7 +233,7 @@ export function Terminal() {
     if (t.startsWith("mouse") || t.startsWith("pointer") || t.startsWith("touch")) {
       setInteracting(false); // pan released → gone immediately
     } else {
-      hideTimer.current = setTimeout(() => setInteracting(false), 250); // zoom → brief linger
+      hideTimer.current = setTimeout(() => setInteracting(false), 150); // zoom → brief linger
     }
   }, []);
 
@@ -167,21 +267,27 @@ export function Terminal() {
     setRenaming(null);
   };
 
+  const saveCurrent = () => {
+    if (!store.current) return;
+    store.current.spaces[activeRef.current].nodes = nodes;
+    store.current.spaces[activeRef.current].dock = dock;
+  };
   const switchSpace = (i: number) => {
     if (!store.current) return;
-    store.current.spaces[activeRef.current].nodes = nodes; // save current
+    saveCurrent();
     activeRef.current = i;
     setActive(i);
     setNodes(store.current.spaces[i].nodes);
+    setDock(store.current.spaces[i].dock ?? DEFAULT_DOCK);
   };
   const addSpace = () => {
     if (!store.current) return;
-    store.current.spaces[activeRef.current].nodes = nodes;
-    store.current.spaces.push({ name: `WS ${store.current.spaces.length + 1}`, nodes: [] });
+    saveCurrent();
+    store.current.spaces.push({ name: `WS ${store.current.spaces.length + 1}`, nodes: [], dock: { ...DEFAULT_DOCK } });
     const i = store.current.spaces.length - 1;
     activeRef.current = i; setActive(i);
     setSpaceNames(store.current.spaces.map((s) => s.name));
-    setNodes([]);
+    setNodes([]); setDock({ ...DEFAULT_DOCK });
   };
   const removeSpace = (i: number) => {
     if (!store.current || store.current.spaces.length <= 1) return;
@@ -190,14 +296,15 @@ export function Terminal() {
     activeRef.current = ni; setActive(ni);
     setSpaceNames(store.current.spaces.map((s) => s.name));
     setNodes(store.current.spaces[ni].nodes);
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(store.current)); } catch { /* ignore */ }
+    setDock(store.current.spaces[ni].dock ?? DEFAULT_DOCK);
+    saveStore();
   };
-  const clearSpace = () => { if (confirm("Clear all widgets in this workspace?")) setNodes([]); };
+  const clearSpace = () => { if (confirm("Clear all widgets in this workspace?")) { setNodes([]); setDock({ ...DEFAULT_DOCK }); } };
   const resetAll = () => {
     if (!confirm("Reset all workspaces to default?")) return;
     const p = defaultSpaces();
     store.current = p; activeRef.current = 0; setActive(0);
-    setSpaceNames(p.spaces.map((s) => s.name)); setNodes(p.spaces[0].nodes);
+    setSpaceNames(p.spaces.map((s) => s.name)); setNodes(p.spaces[0].nodes); setDock({ ...DEFAULT_DOCK });
     try { localStorage.setItem(STORE_KEY, JSON.stringify(p)); } catch { /* ignore */ }
   };
 
@@ -277,6 +384,7 @@ export function Terminal() {
 
           {/* Canvas / Backtest */}
           <main
+            ref={mainRef}
             className="relative min-h-0 flex-1"
             onDragOver={(e) => { if (e.dataTransfer.types.includes("application/apex-widget")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setDragOver(true); } }}
             onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
@@ -291,7 +399,8 @@ export function Terminal() {
                 onMoveStart={startInteract}
                 onMoveEnd={(e) => endInteract(e)}
                 onNodeDragStart={startInteract}
-                onNodeDragStop={() => { clearHide(); setInteracting(false); }}
+                onNodeDrag={(e) => onNodeDrag(e)}
+                onNodeDragStop={onNodeDragStop}
                 onPaneClick={deselectAll}
                 nodeTypes={nodeTypes}
                 proOptions={{ hideAttribution: true }}
@@ -303,17 +412,29 @@ export function Terminal() {
                 selectionOnDrag={false}
                 deleteKeyCode={null}
               >
-                <Background id="lines" variant={BackgroundVariant.Lines} gap={66} size={1} color="#141414" />
-                <Background id="dots" variant={BackgroundVariant.Dots} gap={22} size={1} color="#202020" />
+                <Background id="lines" variant={BackgroundVariant.Lines} gap={66} size={1} color={grid.lines} />
+                <Background id="dots" variant={BackgroundVariant.Dots} gap={22} size={1} color={grid.dots} />
                 <Controls showInteractive={false} />
                 {interacting && (
-                  <MiniMap pannable zoomable nodeColor="#c9a84c55" nodeStrokeColor="#c9a84c" maskColor="rgba(0,0,0,0.6)" style={{ background: "#0a0a0a", border: "1px solid #222" }} />
+                  <MiniMap pannable zoomable nodeColor="#c9a84c66" nodeStrokeColor="#c9a84c" maskColor={light ? "rgba(0,0,0,0.15)" : "rgba(0,0,0,0.6)"} />
                 )}
               </ReactFlow>
             ) : (
               <div className="absolute inset-0 overflow-auto p-4">
                 <BacktestTab />
               </div>
+            )}
+
+            {/* Docked panels (fixed to the edges, stay put while the canvas pans) */}
+            {view === "terminal" && dockPanel("left")}
+            {view === "terminal" && dockPanel("right")}
+
+            {/* Snap preview while dragging a widget toward an edge */}
+            {view === "terminal" && snapZone && (
+              <div
+                className="pointer-events-none absolute top-0 bottom-0 z-40 rounded-lg border-2 border-dashed border-gold/70 bg-gold/10"
+                style={{ [snapZone]: 0, width: `${snapZone === "left" ? dock.leftW : dock.rightW}%` } as React.CSSProperties}
+              />
             )}
 
             {/* Drag-over highlight when dropping a widget from the sidebar */}
