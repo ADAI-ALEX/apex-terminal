@@ -8,6 +8,7 @@ import {
   type OnboardingStatus,
   type SettingsUpdate,
 } from "@/lib/onboarding";
+import { applyTheme, getMode, type ThemeMode } from "@/lib/theme";
 
 const MODELS: [string, string][] = [
   ["claude-opus-4-8", "Claude Opus 4.8 (most capable)"],
@@ -28,6 +29,7 @@ export default function SettingsPage() {
   const [profile, setProfile] = useState("prop_ftmo");
   const [markets, setMarkets] = useState<string[]>([]);
   const [tradingEnabled, setTradingEnabled] = useState(false);
+  const [theme, setTheme] = useState<ThemeMode>("dark");
   // IG credentials (blank = keep existing).
   const [igAccType, setIgAccType] = useState("DEMO");
   const [igUsername, setIgUsername] = useState("");
@@ -49,6 +51,8 @@ export default function SettingsPage() {
       setIgAccType(s.acc_type || "DEMO");
     })();
   }, []);
+
+  useEffect(() => { setTheme(getMode()); }, []);
 
   function toggleMarket(m: string) {
     setMarkets((cur) => (cur.includes(m) ? cur.filter((x) => x !== m) : [...cur, m]));
@@ -91,6 +95,27 @@ export default function SettingsPage() {
       </header>
 
       <div className="space-y-6">
+        {/* Appearance */}
+        <section className="rounded-md border border-border bg-bg2 p-5">
+          <h2 className="mb-3 text-sm font-bold text-gold">Appearance</h2>
+          <Label>Theme</Label>
+          <div className="mt-1 flex gap-2">
+            {(["dark", "light", "auto"] as ThemeMode[]).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => { setTheme(t); applyTheme(t); }}
+                className={`rounded border px-4 py-1.5 font-mono text-xs uppercase tracking-wider transition ${
+                  theme === t ? "border-gold bg-gold/10 text-gold" : "border-border text-textmid hover:border-gold/50"
+                }`}
+              >
+                {t === "dark" ? "🌙 Dark" : t === "light" ? "☀ Light" : "◐ Auto"}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-textdim">Auto follows the time of day — light 07:00–19:00, dark otherwise.</p>
+        </section>
+
         {/* Claude AI */}
         <section className="rounded-md border border-border bg-bg2 p-5">
           <h2 className="mb-3 text-sm font-bold text-gold">Claude AI</h2>

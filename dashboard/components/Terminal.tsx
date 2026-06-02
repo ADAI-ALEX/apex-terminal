@@ -12,6 +12,7 @@ import { TerminalContext } from "./TerminalContext";
 import { WIDGETS, WIDGETS_BY_ID, WIDGET_CATEGORIES, WidgetFrame } from "./widgets";
 import { BacktestTab } from "./BacktestTab";
 import { SignOutButton } from "./SignOutButton";
+import { ThemeToggle } from "./ThemeToggle";
 
 const STORE_KEY = "apex.terminal.v3";
 type WNode = Node<{ widgetId: string }>;
@@ -123,11 +124,17 @@ export function Terminal() {
     setNodes((nds) => [...nds, mk(widgetId, pos.x, pos.y, def.w * 60, def.h * 24)]);
   }, []);
 
-  // Keep the minimap visible for ~1.1s after the last pan/zoom/drag (no flicker).
-  const bumpInteract = useCallback(() => {
-    setInteracting(true);
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setInteracting(false), 1100);
+  // MiniMap visibility: pan (drag) hides instantly on release; zoom (wheel) lingers 0.25s.
+  const clearHide = () => { if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; } };
+  const startInteract = useCallback(() => { clearHide(); setInteracting(true); }, []);
+  const endInteract = useCallback((e?: any) => {
+    clearHide();
+    const t: string = (e && e.type) || "";
+    if (t.startsWith("mouse") || t.startsWith("pointer") || t.startsWith("touch")) {
+      setInteracting(false); // pan released → gone immediately
+    } else {
+      hideTimer.current = setTimeout(() => setInteracting(false), 250); // zoom → brief linger
+    }
   }, []);
 
   const onDropWidget = useCallback((e: React.DragEvent) => {
@@ -219,6 +226,7 @@ export function Terminal() {
           />
           <StatusDot status={status} mode={state?.mode} />
           <Clock />
+          <ThemeToggle />
           <button onClick={toggleFullscreen} title="Fullscreen terminal" className="rounded border border-border px-2 py-1 font-mono text-[12px] text-textmid transition hover:border-gold hover:text-gold">⛶</button>
         </header>
 
@@ -280,12 +288,10 @@ export function Terminal() {
                 edges={[]}
                 onNodesChange={onNodesChange}
                 onInit={(inst) => { rfRef.current = inst; }}
-                onMove={bumpInteract}
-                onMoveStart={bumpInteract}
-                onMoveEnd={bumpInteract}
-                onNodeDragStart={bumpInteract}
-                onNodeDrag={bumpInteract}
-                onNodeDragStop={bumpInteract}
+                onMoveStart={startInteract}
+                onMoveEnd={(e) => endInteract(e)}
+                onNodeDragStart={startInteract}
+                onNodeDragStop={() => { clearHide(); setInteracting(false); }}
                 onPaneClick={deselectAll}
                 nodeTypes={nodeTypes}
                 proOptions={{ hideAttribution: true }}

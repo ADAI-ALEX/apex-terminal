@@ -116,6 +116,16 @@ class TradeJournal:
             "total_pnl": round(sum(r["pnl"] for r in rows), 2),
         }
 
+    def daily_history(self, days: int = 120) -> list[dict]:
+        """Realised P&L grouped by calendar day (for the calendar heatmap)."""
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        rows = self._conn.execute(
+            "SELECT substr(closed_at,1,10) AS d, SUM(pnl) AS pnl, COUNT(*) AS n "
+            "FROM trades WHERE closed_at >= ? GROUP BY d ORDER BY d",
+            (since,),
+        ).fetchall()
+        return [{"date": r["d"], "pnl": round(float(r["pnl"]), 2), "trades": int(r["n"])} for r in rows]
+
     def equity_curve(self, starting_balance: float = 10_000.0) -> list[dict]:
         rows = self._conn.execute(
             "SELECT closed_at, pnl FROM trades ORDER BY closed_at ASC"

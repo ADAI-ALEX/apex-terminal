@@ -17,7 +17,7 @@ const SYMBOLS: Record<string, string> = {
 
 // Yahoo only serves intraday for limited windows — pick a sensible range per interval.
 const RANGE_FOR: Record<string, string> = {
-  "1m": "5d", "5m": "1mo", "15m": "1mo", "30m": "3mo", "60m": "6mo", "1d": "5y",
+  "1m": "5d", "5m": "1mo", "15m": "1mo", "30m": "1mo", "60m": "2y", "1d": "10y",
 };
 
 export async function GET(request: Request) {

@@ -86,6 +86,7 @@ export interface AlgoState {
     { time: number; open: number; high: number; low: number; close: number }[]
   >;
   markets?: string[];
+  daily_history?: { date: string; pnl: number; trades: number }[];
   portfolio_health: number;
   api_calls: Record<string, number>;
   last_heartbeat: string;
