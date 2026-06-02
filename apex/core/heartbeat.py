@@ -341,10 +341,10 @@ class Heartbeat:
         logger.info("Backtest {} complete.", rid)
 
     def run_backtest_request(self, req: dict) -> dict:
-        """Fetch historical candles via the broker and run the backtest engine."""
+        """Run the backtest, reusing in-memory candles to avoid IG allowance limits."""
         from apex.backtest.runner import run_request
 
-        return run_request(self.broker, self.s, req)
+        return run_request(self.broker, self.s, req, history=self.history)
 
     def _read_config_stamp(self) -> str | None:
         try:

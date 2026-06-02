@@ -28,6 +28,7 @@ export function LiveChart({ state }: { state: AlgoState }) {
   const chartRef = useRef<any>(null);
   const candleRef = useRef<any>(null);
   const lineRef = useRef<any>(null);
+  const fittedFor = useRef<string>("");   // only auto-fit once per market
 
   const active = selected && markets.includes(selected) ? selected : markets[0] ?? "";
   const snap = active ? state.indicators?.[active] : undefined;
@@ -78,7 +79,12 @@ export function LiveChart({ state }: { state: AlgoState }) {
       candle.setData([]);
       line.setData(rows.map((c) => ({ time: c.time, value: c.close })));
     }
-    if (rows.length) chartRef.current?.timeScale().fitContent();
+    // Only auto-fit the FIRST time data arrives for a market — otherwise the user's
+    // zoom/scroll is preserved across live updates.
+    if (rows.length && fittedFor.current !== `${active}:${mode}`) {
+      chartRef.current?.timeScale().fitContent();
+      fittedFor.current = `${active}:${mode}`;
+    }
   }, [ohlc, mode, active]);
 
   function toggleFullscreen() {
