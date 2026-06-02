@@ -25,6 +25,7 @@ export function BacktestTab() {
   const [running, setRunning] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
   const [result, setResult] = useState<Result | null>(null);
+  const [progress, setProgress] = useState(0);
 
   // Replay state
   const [idx, setIdx] = useState(0);     // candles revealed
@@ -39,7 +40,7 @@ export function BacktestTab() {
   const showResults = running || ready;   // render the cards immediately, fill them live
 
   async function run() {
-    setRunning(true); setResult(null); setIdx(0); setPlaying(false);
+    setRunning(true); setResult(null); setIdx(0); setPlaying(false); setProgress(8);
     setStatusMsg("Submitting backtest…");
     try {
       const res = await fetch("/api/backtest", {
@@ -51,7 +52,7 @@ export function BacktestTab() {
         setStatusMsg("Running on your engine (real data)…");
         const deadline = Date.now() + 120_000;
         while (Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 2500));
+          await new Promise((r) => setTimeout(r, 1500));
           const poll = await fetch(`/api/backtest?id=${data.id}`, { cache: "no-store" });
           const pj = (await poll.json()) as Result;
           if (!pj.pending) return finish(pj);
@@ -63,10 +64,18 @@ export function BacktestTab() {
   }
 
   function finish(r: Result) {
+    setProgress(100);
     setRunning(false); setStatusMsg("");
     setResult(r);
     if (!r.error && (r.candles?.length ?? 0) > 0) { setIdx(0); setPlaying(true); }
   }
+
+  // Animate the progress bar toward ~96% while running (snaps to 100% on finish).
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => setProgress((p) => Math.min(96, p + (96 - p) * 0.08)), 140);
+    return () => clearInterval(id);
+  }, [running]);
 
   // Replay ticker.
   useEffect(() => {
@@ -132,6 +141,18 @@ export function BacktestTab() {
               <span className="animate-pulse rounded bg-gold/10 px-2 py-0.5 font-mono text-[10px] text-gold">RUNNING…</span>
             )}
           </div>
+
+          {!ready && (
+            <div className="rounded-md border border-border bg-bg2 p-3">
+              <div className="mb-2 flex items-center justify-between font-mono text-[11px]">
+                <span className="text-textmid">{statusMsg || "Running backtest on historical data…"}</span>
+                <span className="text-gold tabular-nums">{Math.round(progress)}%</span>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded bg-bg3">
+                <div className="h-full rounded bg-gradient-to-r from-gold/70 to-gold transition-all duration-150" style={{ width: `${progress}%` }} />
+              </div>
+            </div>
+          )}
 
           {/* Replay controls + live metrics */}
           {candles.length > 0 && live && (

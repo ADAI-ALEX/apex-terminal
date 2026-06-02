@@ -9,7 +9,7 @@ import ReactFlow, {
 import { useStream } from "./useStream";
 import { WidgetNode } from "./WidgetNode";
 import { TerminalContext } from "./TerminalContext";
-import { WIDGETS, WIDGETS_BY_ID, WIDGET_CATEGORIES } from "./widgets";
+import { WIDGETS, WIDGETS_BY_ID, WIDGET_CATEGORIES, WidgetFrame } from "./widgets";
 import { BacktestTab } from "./BacktestTab";
 import { SignOutButton } from "./SignOutButton";
 
@@ -62,9 +62,10 @@ export function Terminal() {
   const loaded = useRef(false);
   const rfRef = useRef<any>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const prevRect = useRef<Record<string, { x: number; y: number; w: number; h: number }>>({});
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [maximizedId, setMaximizedId] = useState<string | null>(null);
   const [interacting, setInteracting] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const [renaming, setRenaming] = useState<{ i: number; value: string } | null>(null);
 
   // load
@@ -110,23 +111,37 @@ export function Terminal() {
     setNodes((nds) => (nds.some((n) => n.selected) ? nds.map((n) => ({ ...n, selected: false })) : nds));
   }, []);
 
+  // Maximize = overlay that fills the canvas region (the actual node is untouched, so
+  // the user's pan/zoom is preserved and restoring returns it to its exact place).
   const toggleMaximize = useCallback((id: string) => {
-    setMaximizedId((cur) => {
-      if (cur === id) {
-        const r = prevRect.current[id];
-        if (r) setNodes((nds) => nds.map((n) => (n.id === id ? { ...n, position: { x: r.x, y: r.y }, style: { ...n.style, width: r.w, height: r.h } } : n)));
-        setTimeout(() => rfRef.current?.fitView({ padding: 0.15, duration: 300 }), 60);
-        return null;
-      }
-      setNodes((nds) => {
-        const n = nds.find((x) => x.id === id);
-        if (n) prevRect.current[id] = { x: n.position.x, y: n.position.y, w: Number(n.style?.width) || 600, h: Number(n.style?.height) || 400 };
-        return nds.map((x) => (x.id === id ? { ...x, position: { x: 0, y: 0 }, style: { ...x.style, width: 1600, height: 900 } } : x));
-      });
-      setTimeout(() => rfRef.current?.fitView({ nodes: [{ id }], padding: 0.02, duration: 300 }), 60);
-      return id;
-    });
+    setMaximizedId((cur) => (cur === id ? null : id));
   }, []);
+
+  const addWidgetAt = useCallback((widgetId: string, pos: { x: number; y: number }) => {
+    const def = WIDGETS_BY_ID[widgetId];
+    if (!def) return;
+    setNodes((nds) => [...nds, mk(widgetId, pos.x, pos.y, def.w * 60, def.h * 24)]);
+  }, []);
+
+  // Keep the minimap visible for ~1.1s after the last pan/zoom/drag (no flicker).
+  const bumpInteract = useCallback(() => {
+    setInteracting(true);
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setInteracting(false), 1100);
+  }, []);
+
+  const onDropWidget = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const id = e.dataTransfer.getData("application/apex-widget");
+    if (!id) return;
+    const inst = rfRef.current;
+    const pos = inst?.screenToFlowPosition
+      ? inst.screenToFlowPosition({ x: e.clientX, y: e.clientY })
+      : { x: 80, y: 80 };
+    if (view !== "terminal") setView("terminal");
+    addWidgetAt(id, pos);
+  }, [addWidgetAt, view]);
 
   const toggleFullscreen = () => {
     if (typeof document === "undefined") return;
@@ -222,10 +237,17 @@ export function Terminal() {
                   <div key={cat.name} className="mb-1">
                     <div className="px-3 py-1 font-mono text-[9px] uppercase tracking-[0.2em] text-textdim">{cat.name}</div>
                     {cat.items.map((w) => (
-                      <button key={w.id} onClick={() => addWidget(w.id)} title={`Add ${w.name}`} className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition hover:bg-bg3">
+                      <button
+                        key={w.id}
+                        draggable
+                        onDragStart={(e) => { e.dataTransfer.setData("application/apex-widget", w.id); e.dataTransfer.effectAllowed = "copy"; }}
+                        onClick={() => addWidget(w.id)}
+                        title={`Drag onto the canvas, or click to add ${w.name}`}
+                        className="group/item flex w-full cursor-grab items-center gap-2 px-3 py-1.5 text-left transition hover:bg-bg3 active:cursor-grabbing"
+                      >
                         <span className="rounded bg-gold/10 px-1 py-0.5 font-mono text-[9px] text-gold">{w.code}</span>
                         <span className="text-[12px] text-textmid">{w.name}</span>
-                        <span className="ml-auto font-mono text-[11px] text-textdim">+</span>
+                        <span className="ml-auto font-mono text-[11px] text-textdim opacity-0 transition group-hover/item:opacity-100">⠿</span>
                       </button>
                     ))}
                   </div>
@@ -246,17 +268,24 @@ export function Terminal() {
           )}
 
           {/* Canvas / Backtest */}
-          <main className="relative min-h-0 flex-1">
+          <main
+            className="relative min-h-0 flex-1"
+            onDragOver={(e) => { if (e.dataTransfer.types.includes("application/apex-widget")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setDragOver(true); } }}
+            onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
+            onDrop={onDropWidget}
+          >
             {view === "terminal" ? (
               <ReactFlow
                 nodes={nodes}
                 edges={[]}
                 onNodesChange={onNodesChange}
                 onInit={(inst) => { rfRef.current = inst; }}
-                onMoveStart={() => setInteracting(true)}
-                onMoveEnd={() => setInteracting(false)}
-                onNodeDragStart={() => setInteracting(true)}
-                onNodeDragStop={() => setInteracting(false)}
+                onMove={bumpInteract}
+                onMoveStart={bumpInteract}
+                onMoveEnd={bumpInteract}
+                onNodeDragStart={bumpInteract}
+                onNodeDrag={bumpInteract}
+                onNodeDragStop={bumpInteract}
                 onPaneClick={deselectAll}
                 nodeTypes={nodeTypes}
                 proOptions={{ hideAttribution: true }}
@@ -280,6 +309,31 @@ export function Terminal() {
                 <BacktestTab />
               </div>
             )}
+
+            {/* Drag-over highlight when dropping a widget from the sidebar */}
+            {dragOver && view === "terminal" && (
+              <div className="pointer-events-none absolute inset-2 z-10 rounded-lg border-2 border-dashed border-gold/60 bg-gold/5" />
+            )}
+
+            {/* Maximize overlay: fills the canvas region, leaves pan/zoom untouched */}
+            {view === "terminal" && maximizedId && (() => {
+              const inst = nodes.find((n) => n.id === maximizedId);
+              const def = inst && WIDGETS_BY_ID[inst.data.widgetId];
+              if (!def) return null;
+              return (
+                <div className="absolute inset-0 z-30 bg-bg p-2">
+                  <div className="apex-window h-full w-full">
+                    <WidgetFrame
+                      code={def.code} title={def.name} maximized
+                      onMaximize={() => setMaximizedId(null)}
+                      onClose={() => { removeWidget(maximizedId); setMaximizedId(null); }}
+                    >
+                      {state ? def.render(state) : <div className="flex h-full items-center justify-center font-mono text-[11px] text-textdim">waiting for engine…</div>}
+                    </WidgetFrame>
+                  </div>
+                </div>
+              );
+            })()}
           </main>
         </div>
 

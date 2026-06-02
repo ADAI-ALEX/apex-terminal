@@ -4,37 +4,42 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { AlgoState } from "@/lib/types";
 
 type ChartMode = "candles" | "line";
+type Candle = { time: number; open: number; high: number; low: number; close: number };
+
+const INTERVALS: [string, string][] = [["5m", "5m"], ["15m", "15m"], ["1h", "1H"], ["1d", "1D"]];
 
 /**
- * Live chart body (chrome supplied by the widget frame). Candlesticks/line from the
- * OHLC history the engine publishes in `state.candles`. The instrument list comes from
- * the markets selected in Settings (`state.markets`). Shows a loader until data arrives.
+ * Price chart. Candles come from /api/prices (Yahoo Finance proxy — free, fast, no
+ * key), so it loads instantly and switching instrument/interval is snappy. Falls back
+ * to the engine's streamed candles if the upstream is unavailable. Indicator readouts
+ * come from the algo's live state.
  */
 export function LiveChart({ state }: { state: AlgoState }) {
   const markets = useMemo(() => {
-    const selected = state.markets ?? [];
+    const sel = state.markets ?? [];
     const withData = Object.keys(state.candles ?? {});
-    const merged = selected.length ? selected : withData;
-    // include any market that has data but isn't listed, just in case
+    const merged = sel.length ? [...sel] : [...withData];
     for (const m of withData) if (!merged.includes(m)) merged.push(m);
     return merged.length ? merged : Object.keys(state.indicators ?? {});
   }, [state.markets, state.candles, state.indicators]);
 
-  const [selected, setSelected] = useState<string>("");
+  const [selected, setSelected] = useState("");
+  const [interval, setInterval_] = useState("15m");
   const [mode, setMode] = useState<ChartMode>("candles");
+  const [loading, setLoading] = useState(false);
+  const [empty, setEmpty] = useState(false);
+
+  const active = selected && markets.includes(selected) ? selected : markets[0] ?? "";
+  const snap = active ? state.indicators?.[active] : undefined;
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const candleRef = useRef<any>(null);
   const lineRef = useRef<any>(null);
-  const fittedFor = useRef<string>("");   // only auto-fit once per market
+  const fittedFor = useRef("");
 
-  const active = selected && markets.includes(selected) ? selected : markets[0] ?? "";
-  const snap = active ? state.indicators?.[active] : undefined;
-  const ohlc = active ? state.candles?.[active] ?? [] : [];
-  const loading = active !== "" && ohlc.length === 0;
-
+  // Mount the chart with an explicit ResizeObserver (reliable fill on resize/zoom).
   useEffect(() => {
     let disposed = false;
     let ro: ResizeObserver | null = null;
@@ -43,61 +48,62 @@ export function LiveChart({ state }: { state: AlgoState }) {
       if (disposed || !containerRef.current) return;
       const el = containerRef.current;
       const chart = lib.createChart(el, {
-        width: el.clientWidth || 300,
-        height: el.clientHeight || 200,
-        layout: { background: { color: "#0a0a0a" }, textColor: "#999" },
-        grid: { vertLines: { color: "#161616" }, horzLines: { color: "#161616" } },
-        timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#222" },
-        rightPriceScale: { borderColor: "#222" },
+        width: el.clientWidth || 320, height: el.clientHeight || 200,
+        layout: { background: { color: "#0c0c0e" }, textColor: "#999" },
+        grid: { vertLines: { color: "#17171a" }, horzLines: { color: "#17171a" } },
+        timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#262626" },
+        rightPriceScale: { borderColor: "#262626" },
         crosshair: { mode: 0 },
-        handleScroll: true,
-        handleScale: true,
+        handleScroll: true, handleScale: true,
       });
-      candleRef.current = chart.addCandlestickSeries({
-        upColor: "#22c55e", downColor: "#ef4444", borderVisible: false,
-        wickUpColor: "#22c55e", wickDownColor: "#ef4444",
-      });
+      candleRef.current = chart.addCandlestickSeries({ upColor: "#22c55e", downColor: "#ef4444", borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444" });
       lineRef.current = chart.addLineSeries({ color: "#e8c97a", lineWidth: 2 });
       chartRef.current = chart;
-      // Explicit resize → reliably fills the widget when it's resized / zoomed.
-      ro = new ResizeObserver(() => {
-        const w = el.clientWidth, h = el.clientHeight;
-        if (w > 0 && h > 0) chart.resize(w, h);
-      });
+      ro = new ResizeObserver(() => { const w = el.clientWidth, h = el.clientHeight; if (w > 0 && h > 0) chart.resize(w, h); });
       ro.observe(el);
     })();
-    return () => {
-      disposed = true;
-      ro?.disconnect();
-      chartRef.current?.remove();
-      chartRef.current = null;
-      candleRef.current = null;
-      lineRef.current = null;
-    };
+    return () => { disposed = true; ro?.disconnect(); chartRef.current?.remove(); chartRef.current = candleRef.current = lineRef.current = null; };
   }, []);
 
+  // Fetch candles whenever instrument or interval changes (and refresh every 60s).
   useEffect(() => {
-    const candle = candleRef.current;
-    const line = lineRef.current;
-    if (!candle || !line) return;
-    const seen = new Set<number>();
-    const rows = [...ohlc]
-      .sort((a, b) => a.time - b.time)
-      .filter((c) => (seen.has(c.time) ? false : (seen.add(c.time), true)));
-    if (mode === "candles") {
-      candle.setData(rows);
-      line.setData([]);
-    } else {
-      candle.setData([]);
-      line.setData(rows.map((c) => ({ time: c.time, value: c.close })));
-    }
-    // Only auto-fit the FIRST time data arrives for a market — otherwise the user's
-    // zoom/scroll is preserved across live updates.
-    if (rows.length && fittedFor.current !== `${active}:${mode}`) {
-      chartRef.current?.timeScale().fitContent();
-      fittedFor.current = `${active}:${mode}`;
-    }
-  }, [ohlc, mode, active]);
+    if (!active) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const draw = (rows: Candle[]) => {
+      const candle = candleRef.current, line = lineRef.current;
+      if (!candle || !line) return;
+      const seen = new Set<number>();
+      const clean = [...rows].sort((a, b) => a.time - b.time).filter((c) => (seen.has(c.time) ? false : (seen.add(c.time), true)));
+      setEmpty(clean.length === 0);
+      if (mode === "candles") { candle.setData(clean); line.setData([]); }
+      else { candle.setData([]); line.setData(clean.map((c) => ({ time: c.time, value: c.close }))); }
+      const key = `${active}:${interval}:${mode}`;
+      if (clean.length && fittedFor.current !== key) { chartRef.current?.timeScale().fitContent(); fittedFor.current = key; }
+    };
+
+    const load = async (showSpinner: boolean) => {
+      if (showSpinner) setLoading(true);
+      try {
+        const res = await fetch(`/api/prices?symbol=${encodeURIComponent(active)}&interval=${interval}`, { cache: "no-store" });
+        const j = await res.json();
+        let rows: Candle[] = Array.isArray(j.candles) ? j.candles : [];
+        if (!rows.length) rows = (state.candles?.[active] ?? []) as Candle[]; // fallback: engine candles
+        if (alive) draw(rows);
+      } catch {
+        if (alive) draw((state.candles?.[active] ?? []) as Candle[]);
+      } finally {
+        if (alive && showSpinner) setLoading(false);
+      }
+    };
+
+    void load(true);
+    const tick = () => { void load(false); timer = setTimeout(tick, 60_000); };
+    timer = setTimeout(tick, 60_000);
+    return () => { alive = false; clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, interval, mode]);
 
   function toggleFullscreen() {
     const el = wrapRef.current;
@@ -109,16 +115,17 @@ export function LiveChart({ state }: { state: AlgoState }) {
   return (
     <div ref={wrapRef} className="flex h-full flex-col bg-bg2">
       <div className="flex items-center justify-between border-b border-border px-3 py-1.5">
-        <select
-          value={active}
-          onChange={(e) => setSelected(e.target.value)}
-          className="rounded border border-border bg-bg3 px-2 py-1 font-mono text-[11px] text-textmid outline-none focus:border-gold"
-        >
-          {markets.length === 0 && <option value="">No instruments</option>}
-          {markets.map((m) => (
-            <option key={m} value={m}>{m}</option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <select value={active} onChange={(e) => setSelected(e.target.value)} className="rounded border border-border bg-bg3 px-2 py-1 font-mono text-[11px] text-textmid outline-none focus:border-gold">
+            {markets.length === 0 && <option value="">No instruments</option>}
+            {markets.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <div className="flex overflow-hidden rounded border border-border font-mono text-[10px]">
+            {INTERVALS.map(([v, l]) => (
+              <button key={v} onClick={() => setInterval_(v)} className={`px-2 py-1 ${interval === v ? "bg-gold/15 text-gold" : "text-textmid hover:text-gold"}`}>{l}</button>
+            ))}
+          </div>
+        </div>
         <div className="flex items-center gap-2">
           <div className="flex overflow-hidden rounded border border-border font-mono text-[10px]">
             <button onClick={() => setMode("candles")} className={`px-2 py-1 ${mode === "candles" ? "bg-gold/15 text-gold" : "text-textmid hover:text-gold"}`}>Candles</button>
@@ -131,15 +138,13 @@ export function LiveChart({ state }: { state: AlgoState }) {
       <div className="relative min-h-0 flex-1">
         <div ref={containerRef} className="absolute inset-0" />
         {loading && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-bg2/80">
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-bg2/70">
             <div className="h-6 w-6 animate-spin rounded-full border-2 border-border border-t-gold" />
-            <div className="font-mono text-xs text-textmid">Loading {active} candles…</div>
+            <div className="font-mono text-[11px] text-textmid">Loading {active}…</div>
           </div>
         )}
-        {!loading && markets.length === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center font-mono text-xs text-textdim">
-            No instruments selected — choose some in Settings.
-          </div>
+        {!loading && empty && (
+          <div className="absolute inset-0 flex items-center justify-center font-mono text-[11px] text-textdim">No data for {active} at {interval}.</div>
         )}
       </div>
 

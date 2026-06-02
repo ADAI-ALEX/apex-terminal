@@ -16,8 +16,8 @@ export function WidgetFrame({
 }) {
   const stop = (e: React.MouseEvent) => e.stopPropagation();
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-md border border-border bg-bg2">
-      <div className="widget-drag flex items-center justify-between border-b border-border bg-bg3 px-2 py-1">
+    <div className="flex h-full flex-col overflow-hidden rounded-lg border border-[#33333a] bg-[#121214]">
+      <div className="widget-drag flex items-center justify-between border-b border-[#2c2c32] bg-[#1b1b1f] px-2.5 py-1.5">
         <span className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-gold">
           <span className="rounded bg-gold/15 px-1 py-0.5 text-[9px] text-gold">{code}</span>
           {title}
