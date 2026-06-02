@@ -272,6 +272,10 @@ class Heartbeat:
     #  Health — stats + watchdog
     # ──────────────────────────────────────────────────────────────────
     async def _health(self) -> None:
+        try:
+            STATE.daily_history = self.journal.daily_history()
+        except Exception:
+            pass
         self._push_state()
         await self._publish_kv()
         logger.info("♥ alive | positions={} daily=£{:.2f} ({:.1f}%) mode={}",

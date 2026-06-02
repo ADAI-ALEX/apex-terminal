@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AlgoState } from "@/lib/types";
+import { chartColors } from "@/lib/theme";
 
 type ChartMode = "candles" | "line";
 type Candle = { time: number; open: number; high: number; low: number; close: number };
@@ -43,26 +44,34 @@ export function LiveChart({ state }: { state: AlgoState }) {
   useEffect(() => {
     let disposed = false;
     let ro: ResizeObserver | null = null;
+    let cleanupTheme: (() => void) | null = null;
     (async () => {
       const lib = await import("lightweight-charts");
       if (disposed || !containerRef.current) return;
       const el = containerRef.current;
+      const c0 = chartColors();
       const chart = lib.createChart(el, {
         width: el.clientWidth || 320, height: el.clientHeight || 200,
-        layout: { background: { color: "#0c0c0e" }, textColor: "#999" },
-        grid: { vertLines: { color: "#17171a" }, horzLines: { color: "#17171a" } },
-        timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#262626" },
-        rightPriceScale: { borderColor: "#262626" },
+        layout: { background: { color: c0.bg }, textColor: c0.text },
+        grid: { vertLines: { color: c0.grid }, horzLines: { color: c0.grid } },
+        timeScale: { timeVisible: true, secondsVisible: false, borderColor: c0.border },
+        rightPriceScale: { borderColor: c0.border },
         crosshair: { mode: 0 },
         handleScroll: true, handleScale: true,
       });
       candleRef.current = chart.addCandlestickSeries({ upColor: "#22c55e", downColor: "#ef4444", borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444" });
-      lineRef.current = chart.addLineSeries({ color: "#e8c97a", lineWidth: 2 });
+      lineRef.current = chart.addLineSeries({ color: "#c9a84c", lineWidth: 2 });
       chartRef.current = chart;
       ro = new ResizeObserver(() => { const w = el.clientWidth, h = el.clientHeight; if (w > 0 && h > 0) chart.resize(w, h); });
       ro.observe(el);
+      const onTheme = () => {
+        const c = chartColors();
+        chart.applyOptions({ layout: { background: { color: c.bg }, textColor: c.text }, grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } }, timeScale: { borderColor: c.border }, rightPriceScale: { borderColor: c.border } });
+      };
+      window.addEventListener("apex-theme", onTheme);
+      cleanupTheme = () => window.removeEventListener("apex-theme", onTheme);
     })();
-    return () => { disposed = true; ro?.disconnect(); chartRef.current?.remove(); chartRef.current = candleRef.current = lineRef.current = null; };
+    return () => { disposed = true; ro?.disconnect(); cleanupTheme?.(); chartRef.current?.remove(); chartRef.current = candleRef.current = lineRef.current = null; };
   }, []);
 
   // Fetch candles whenever instrument or interval changes (and refresh every 60s).

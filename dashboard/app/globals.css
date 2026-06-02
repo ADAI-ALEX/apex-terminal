@@ -2,16 +2,44 @@
 @tailwind components;
 @tailwind utilities;
 
+@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;700&display=swap");
+
+/* ── Theme palettes (RGB channels so Tailwind /opacity modifiers work) ── */
 :root {
   color-scheme: dark;
+  --c-bg: 10 10 10;
+  --c-bg2: 20 20 23;
+  --c-bg3: 28 28 33;
+  --c-border: 44 44 50;
+  --c-gold: 201 168 76;
+  --c-gold2: 232 201 122;
+  --c-up: 34 197 94;
+  --c-down: 239 68 68;
+  --c-info: 59 130 246;
+  --c-textmid: 160 160 160;
+  --c-textdim: 110 110 110;
+  --c-text: 240 236 228;
 }
-
-@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;700&display=swap");
+.theme-light {
+  color-scheme: light;
+  --c-bg: 240 240 236;
+  --c-bg2: 255 255 255;
+  --c-bg3: 232 232 226;
+  --c-border: 210 210 202;
+  --c-gold: 150 116 18;
+  --c-gold2: 176 141 47;
+  --c-up: 21 128 61;
+  --c-down: 190 28 28;
+  --c-info: 37 99 235;
+  --c-textmid: 70 70 70;
+  --c-textdim: 125 125 120;
+  --c-text: 24 24 24;
+}
 
 html,
 body {
-  background: #0a0a0a;
-  color: #f0ece4;
+  background: rgb(var(--c-bg));
+  color: rgb(var(--c-text));
   font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
 }
 

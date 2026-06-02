@@ -25,18 +25,23 @@ def run_request(
         if market is None:
             return {"error": f"Unknown market '{key}'."}
         minutes = int(req.get("minutes", settings.heartbeat.candle_minutes_default))
-        bars = max(80, min(int(req.get("bars", 500)), 1000))
+        bars = max(80, min(int(req.get("bars", 500)), 5000))
 
+        from apex.backtest import yahoo
         from apex.backtest.cache import load_candles, save_candles
 
-        # 1) Reuse in-memory candles the engine already streams (no IG allowance cost).
-        candles: list[Candle] = list((history or {}).get(key, []))
-        source = "live cache"
-        # 2) Otherwise load from the on-disk cache (persisted real data, no IG cost).
+        # 1) Yahoo Finance — free, deep history, any mapped instrument, no IG limit.
+        candles: list[Candle] = yahoo.fetch(key, minutes, bars)
+        source = "yahoo"
+        # 2) Fall back to in-memory candles the engine already streams.
+        if len(candles) < 80:
+            candles = list((history or {}).get(key, []))
+            source = "live cache"
+        # 3) Then the on-disk cache (persisted real data).
         if len(candles) < 80:
             candles = load_candles(key, minutes)
             source = "disk cache"
-        # 3) Last resort: fetch from the broker, handling the IG allowance gracefully.
+        # 4) Last resort: the broker, handling the IG allowance gracefully.
         if len(candles) < 80:
             try:
                 candles = broker.candles(market.epic, minutes, bars)

@@ -41,6 +41,7 @@ class SharedState:
         }
         self.candles: dict[str, list[dict[str, Any]]] = {}   # market_key -> OHLC for the chart
         self.markets: list[str] = []                         # active instrument keys (from settings)
+        self.daily_history: list[dict[str, Any]] = []        # [{date, pnl, trades}] for the calendar
 
     def update(self, **fields: Any) -> None:
         with self._lock:
@@ -86,6 +87,7 @@ class SharedState:
                 "claude_usage": self.claude_usage,
                 "candles": self.candles,
                 "markets": self.markets,
+                "daily_history": self.daily_history,
                 "last_heartbeat": self.last_heartbeat.isoformat(),
                 "logs": recent_logs(50),
                 "server_time": datetime.now(timezone.utc).isoformat(),
