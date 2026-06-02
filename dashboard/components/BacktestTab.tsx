@@ -35,6 +35,8 @@ export function BacktestTab() {
   const equity = result?.equity_curve ?? [];
   const trades = result?.trade_log ?? [];
   const startEq = result?.starting_equity ?? 100_000;
+  const ready = !!(result && !result.error);
+  const showResults = running || ready;   // render the cards immediately, fill them live
 
   async function run() {
     setRunning(true); setResult(null); setIdx(0); setPlaying(false);
@@ -116,13 +118,19 @@ export function BacktestTab() {
 
       {result?.error && <div className="rounded-md border border-down/40 bg-down/10 px-4 py-3 text-sm text-down">{result.error}</div>}
 
-      {result && !result.error && (
+      {showResults && (
         <>
           <div className="flex flex-wrap items-center gap-3">
-            <span className="font-mono text-sm text-textmid">{result.market} · {result.minutes}m · {result.bars} bars</span>
-            <span className={`rounded px-2 py-0.5 font-mono text-[10px] ${result.mode === "IG" ? "bg-up/10 text-up" : "bg-info/10 text-info"}`}>
-              {result.mode === "IG" ? "REAL IG DATA" : "SIMULATED DATA"}
+            <span className="font-mono text-sm text-textmid">
+              {ready ? `${result!.market} · ${result!.minutes}m · ${result!.bars} bars` : `${market} · ${minutes}m · ${bars} bars`}
             </span>
+            {ready ? (
+              <span className={`rounded px-2 py-0.5 font-mono text-[10px] ${result!.mode === "IG" ? "bg-up/10 text-up" : "bg-info/10 text-info"}`}>
+                {result!.mode === "IG" ? "REAL IG DATA" : "SIMULATED DATA"}
+              </span>
+            ) : (
+              <span className="animate-pulse rounded bg-gold/10 px-2 py-0.5 font-mono text-[10px] text-gold">RUNNING…</span>
+            )}
           </div>
 
           {/* Replay controls + live metrics */}
@@ -153,29 +161,29 @@ export function BacktestTab() {
 
           <ReplayCharts candles={candles} equity={equity} trades={trades} idx={idx} />
 
-          {/* Final summary */}
+          {/* Final summary (placeholders until the result lands) */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat label="Total return" value={pct(result.total_return_pct)} tone={(result.total_return_pct ?? 0) >= 0 ? "up" : "down"} />
-            <Stat label="Trades" value={String(result.trades ?? 0)} />
-            <Stat label="Win rate" value={`${result.win_rate ?? 0}%`} />
-            <Stat label="Profit factor" value={String(result.profit_factor ?? 0)} />
-            <Stat label="Avg R:R" value={String(result.avg_rr ?? 0)} />
-            <Stat label="Expectancy/trade" value={pct(result.expectancy_pct)} />
-            <Stat label="Max daily DD" value={`${result.max_daily_dd_pct ?? 0}%`} tone="down" />
-            <Stat label="Max total DD" value={`${result.max_total_dd_pct ?? 0}%`} tone="down" />
+            <Stat label="Total return" value={ready ? pct(result!.total_return_pct) : "—"} tone={ready ? ((result!.total_return_pct ?? 0) >= 0 ? "up" : "down") : undefined} />
+            <Stat label="Trades" value={ready ? String(result!.trades ?? 0) : "—"} />
+            <Stat label="Win rate" value={ready ? `${result!.win_rate ?? 0}%` : "—"} />
+            <Stat label="Profit factor" value={ready ? String(result!.profit_factor ?? 0) : "—"} />
+            <Stat label="Avg R:R" value={ready ? String(result!.avg_rr ?? 0) : "—"} />
+            <Stat label="Expectancy/trade" value={ready ? pct(result!.expectancy_pct) : "—"} />
+            <Stat label="Max daily DD" value={ready ? `${result!.max_daily_dd_pct ?? 0}%` : "—"} tone={ready ? "down" : undefined} />
+            <Stat label="Max total DD" value={ready ? `${result!.max_total_dd_pct ?? 0}%` : "—"} tone={ready ? "down" : undefined} />
           </div>
 
-          {result.monte_carlo && Number(result.monte_carlo.runs ?? 0) > 0 && (
+          {ready && result!.monte_carlo && Number(result!.monte_carlo.runs ?? 0) > 0 && (
             <div className="rounded-md border border-border bg-bg2 p-4">
               <div className="mb-3 font-mono text-[10px] uppercase tracking-wider text-gold">
-                // Monte Carlo ({result.monte_carlo.runs} runs · target {result.monte_carlo.target_pct}% · ruin {result.monte_carlo.total_limit_pct}%)
+                // Monte Carlo ({result!.monte_carlo!.runs} runs · target {result!.monte_carlo!.target_pct}% · ruin {result!.monte_carlo!.total_limit_pct}%)
               </div>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-                <Stat label="P(pass)" value={`${result.monte_carlo.pass_prob_pct}%`} tone="up" />
-                <Stat label="P(breach)" value={`${result.monte_carlo.breach_prob_pct}%`} tone="down" />
-                <Stat label="Median ret" value={`${result.monte_carlo.median_return_pct}%`} />
-                <Stat label="P5 (bad)" value={`${result.monte_carlo.p5_return_pct}%`} />
-                <Stat label="P95 (good)" value={`${result.monte_carlo.p95_return_pct}%`} />
+                <Stat label="P(pass)" value={`${result!.monte_carlo!.pass_prob_pct}%`} tone="up" />
+                <Stat label="P(breach)" value={`${result!.monte_carlo!.breach_prob_pct}%`} tone="down" />
+                <Stat label="Median ret" value={`${result!.monte_carlo!.median_return_pct}%`} />
+                <Stat label="P5 (bad)" value={`${result!.monte_carlo!.p5_return_pct}%`} />
+                <Stat label="P95 (good)" value={`${result!.monte_carlo!.p95_return_pct}%`} />
               </div>
             </div>
           )}

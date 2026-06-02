@@ -52,8 +52,12 @@ body {
   border-radius: 0;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
 }
+.apex-window {
+  border-radius: 6px;
+}
+/* Selection ring wraps the rounded window (not a rectangle). */
 .react-flow__node.selected .apex-window {
-  outline: 1px solid #c9a84c;
+  box-shadow: 0 0 0 1.5px #c9a84c, 0 0 14px rgba(201, 168, 76, 0.25);
 }
 .react-flow__resize-control.handle {
   background: #c9a84c;

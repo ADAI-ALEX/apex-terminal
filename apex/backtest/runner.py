@@ -27,10 +27,16 @@ def run_request(
         minutes = int(req.get("minutes", settings.heartbeat.candle_minutes_default))
         bars = max(80, min(int(req.get("bars", 500)), 1000))
 
+        from apex.backtest.cache import load_candles, save_candles
+
         # 1) Reuse in-memory candles the engine already streams (no IG allowance cost).
         candles: list[Candle] = list((history or {}).get(key, []))
         source = "live cache"
-        # 2) Otherwise fetch from the broker, but handle the IG allowance gracefully.
+        # 2) Otherwise load from the on-disk cache (persisted real data, no IG cost).
+        if len(candles) < 80:
+            candles = load_candles(key, minutes)
+            source = "disk cache"
+        # 3) Last resort: fetch from the broker, handling the IG allowance gracefully.
         if len(candles) < 80:
             try:
                 candles = broker.candles(market.epic, minutes, bars)
@@ -39,13 +45,15 @@ def run_request(
                 if "ApiException" in type(exc).__name__ or "exceeded" in str(exc).lower():
                     return {"error": (
                         "IG's historical-data allowance is exhausted (ApiExceededException). "
-                        "It resets on a rolling weekly basis. Tip: backtest an instrument your "
-                        "engine is already streaming — those candles are reused for free."
+                        "It resets weekly. Tip: backtest an instrument your engine is already "
+                        "streaming — those candles are cached and reused for free."
                     )}
                 return {"error": str(exc) or exc.__class__.__name__}
 
         if len(candles) < 80:
-            return {"error": "Not enough historical data available yet — let the engine run a little, then retry."}
+            return {"error": "Not enough historical data yet — let the engine stream for a bit, then retry."}
+
+        save_candles(key, minutes, candles)  # refresh the disk cache for next time
 
         result = run_backtest(
             candles, market,

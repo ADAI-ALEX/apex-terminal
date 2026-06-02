@@ -7,10 +7,14 @@ import { UsageCost } from "./UsageCost";
 
 // ── chrome ─────────────────────────────────────────────────────────────
 export function WidgetFrame({
-  code, title, onClose, children,
+  code, title, onClose, onMaximize, maximized, onBodyPointerDown, children,
 }: {
-  code: string; title: string; onClose: () => void; children: React.ReactNode;
+  code: string; title: string; onClose: () => void;
+  onMaximize?: () => void; maximized?: boolean;
+  onBodyPointerDown?: (e: React.MouseEvent) => void;
+  children: React.ReactNode;
 }) {
+  const stop = (e: React.MouseEvent) => e.stopPropagation();
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-md border border-border bg-bg2">
       <div className="widget-drag flex items-center justify-between border-b border-border bg-bg3 px-2 py-1">
@@ -18,18 +22,22 @@ export function WidgetFrame({
           <span className="rounded bg-gold/15 px-1 py-0.5 text-[9px] text-gold">{code}</span>
           {title}
         </span>
-        <button
-          onClick={onClose}
-          onMouseDown={(e) => e.stopPropagation()}
-          title="Close"
-          className="px-1 font-mono text-textdim transition hover:text-down"
-        >
-          ×
-        </button>
+        <span className="flex items-center gap-0.5">
+          {onMaximize && (
+            <button onClick={onMaximize} onMouseDown={stop} title={maximized ? "Restore" : "Maximize"}
+              className="px-1 font-mono text-textdim transition hover:text-gold">
+              {maximized ? "❐" : "⤢"}
+            </button>
+          )}
+          <button onClick={onClose} onMouseDown={stop} title="Close"
+            className="px-1 font-mono text-textdim transition hover:text-down">×</button>
+        </span>
       </div>
-      {/* nodrag/nowheel: let users scroll, click, and zoom charts without the
-          canvas dragging or zooming underneath. */}
-      <div className="nodrag nowheel min-h-0 flex-1 overflow-auto">{children}</div>
+      {/* nodrag/nowheel: scroll, click, and zoom charts without the canvas
+          dragging/zooming underneath. */}
+      <div className="nodrag nowheel min-h-0 flex-1 overflow-auto" onMouseDown={onBodyPointerDown}>
+        {children}
+      </div>
     </div>
   );
 }

@@ -12,7 +12,7 @@ export function SignOutButton() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded border border-border px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-textmid transition hover:border-gold hover:text-gold"
+        className="flex w-full items-center justify-center gap-2 rounded border border-down/50 px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-down transition hover:border-down hover:bg-down/10"
       >
         Sign out
       </button>

@@ -3,7 +3,7 @@ import "reactflow/dist/style.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Apex Algo — Command Centre",
+  title: "Apex Algo",
   description: "Real-time monitoring for the Apex spread-betting algorithm.",
 };
 

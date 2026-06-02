@@ -60,6 +60,12 @@ export function Terminal() {
   const store = useRef<Persisted | null>(null);
   const activeRef = useRef(0);
   const loaded = useRef(false);
+  const rfRef = useRef<any>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const prevRect = useRef<Record<string, { x: number; y: number; w: number; h: number }>>({});
+  const [maximizedId, setMaximizedId] = useState<string | null>(null);
+  const [interacting, setInteracting] = useState(false);
+  const [renaming, setRenaming] = useState<{ i: number; value: string } | null>(null);
 
   // load
   useEffect(() => {
@@ -99,6 +105,45 @@ export function Terminal() {
   const removeWidget = useCallback((id: string) => {
     setNodes((nds) => nds.filter((n) => n.id !== id));
   }, []);
+
+  const deselectAll = useCallback(() => {
+    setNodes((nds) => (nds.some((n) => n.selected) ? nds.map((n) => ({ ...n, selected: false })) : nds));
+  }, []);
+
+  const toggleMaximize = useCallback((id: string) => {
+    setMaximizedId((cur) => {
+      if (cur === id) {
+        const r = prevRect.current[id];
+        if (r) setNodes((nds) => nds.map((n) => (n.id === id ? { ...n, position: { x: r.x, y: r.y }, style: { ...n.style, width: r.w, height: r.h } } : n)));
+        setTimeout(() => rfRef.current?.fitView({ padding: 0.15, duration: 300 }), 60);
+        return null;
+      }
+      setNodes((nds) => {
+        const n = nds.find((x) => x.id === id);
+        if (n) prevRect.current[id] = { x: n.position.x, y: n.position.y, w: Number(n.style?.width) || 600, h: Number(n.style?.height) || 400 };
+        return nds.map((x) => (x.id === id ? { ...x, position: { x: 0, y: 0 }, style: { ...x.style, width: 1600, height: 900 } } : x));
+      });
+      setTimeout(() => rfRef.current?.fitView({ nodes: [{ id }], padding: 0.02, duration: 300 }), 60);
+      return id;
+    });
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (typeof document === "undefined") return;
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void rootRef.current?.requestFullscreen?.();
+  };
+
+  const commitRename = () => {
+    if (!renaming || !store.current) return setRenaming(null);
+    const name = renaming.value.trim();
+    if (name) {
+      store.current.spaces[renaming.i].name = name;
+      setSpaceNames(store.current.spaces.map((s) => s.name));
+      try { localStorage.setItem(STORE_KEY, JSON.stringify(store.current)); } catch { /* ignore */ }
+    }
+    setRenaming(null);
+  };
 
   const switchSpace = (i: number) => {
     if (!store.current) return;
@@ -141,8 +186,8 @@ export function Terminal() {
   }, [query]);
 
   return (
-    <TerminalContext.Provider value={{ state, removeWidget }}>
-      <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg text-textmid">
+    <TerminalContext.Provider value={{ state, removeWidget, toggleMaximize, deselectAll, maximizedId }}>
+      <div ref={rootRef} className="flex h-screen w-screen flex-col overflow-hidden bg-bg text-textmid">
         {/* ── Top bar ── */}
         <header className="flex items-center gap-3 border-b border-border bg-bg2 px-3 py-1.5">
           <span className="font-mono text-sm font-bold tracking-[0.25em] text-gold">APEX</span>
@@ -159,6 +204,7 @@ export function Terminal() {
           />
           <StatusDot status={status} mode={state?.mode} />
           <Clock />
+          <button onClick={toggleFullscreen} title="Fullscreen terminal" className="rounded border border-border px-2 py-1 font-mono text-[12px] text-textmid transition hover:border-gold hover:text-gold">⛶</button>
         </header>
 
         {/* ── Body ── */}
@@ -206,6 +252,12 @@ export function Terminal() {
                 nodes={nodes}
                 edges={[]}
                 onNodesChange={onNodesChange}
+                onInit={(inst) => { rfRef.current = inst; }}
+                onMoveStart={() => setInteracting(true)}
+                onMoveEnd={() => setInteracting(false)}
+                onNodeDragStart={() => setInteracting(true)}
+                onNodeDragStop={() => setInteracting(false)}
+                onPaneClick={deselectAll}
                 nodeTypes={nodeTypes}
                 proOptions={{ hideAttribution: true }}
                 minZoom={0.25}
@@ -216,9 +268,12 @@ export function Terminal() {
                 selectionOnDrag={false}
                 deleteKeyCode={null}
               >
-                <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#1e1e1e" />
+                <Background id="lines" variant={BackgroundVariant.Lines} gap={66} size={1} color="#141414" />
+                <Background id="dots" variant={BackgroundVariant.Dots} gap={22} size={1} color="#202020" />
                 <Controls showInteractive={false} />
-                <MiniMap pannable zoomable nodeColor="#c9a84c33" nodeStrokeColor="#c9a84c" maskColor="rgba(0,0,0,0.6)" style={{ background: "#0a0a0a", border: "1px solid #222" }} />
+                {interacting && (
+                  <MiniMap pannable zoomable nodeColor="#c9a84c55" nodeStrokeColor="#c9a84c" maskColor="rgba(0,0,0,0.6)" style={{ background: "#0a0a0a", border: "1px solid #222" }} />
+                )}
               </ReactFlow>
             ) : (
               <div className="absolute inset-0 overflow-auto p-4">
@@ -232,7 +287,25 @@ export function Terminal() {
         <footer className="flex items-center gap-1 border-t border-border bg-bg2 px-2 py-1">
           {spaceNames.map((name, i) => (
             <span key={i} className={`group flex items-center rounded ${i === active ? "bg-gold/15" : "hover:bg-bg3"}`}>
-              <button onClick={() => switchSpace(i)} className={`px-3 py-1 font-mono text-[10px] uppercase tracking-wider ${i === active ? "text-gold" : "text-textdim"}`}>{name}</button>
+              {renaming?.i === i ? (
+                <input
+                  autoFocus
+                  value={renaming.value}
+                  onChange={(e) => setRenaming({ i, value: e.target.value })}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setRenaming(null); }}
+                  className="w-24 rounded bg-bg3 px-2 py-1 font-mono text-[10px] uppercase text-gold outline-none"
+                />
+              ) : (
+                <button
+                  onClick={() => switchSpace(i)}
+                  onDoubleClick={() => setRenaming({ i, value: name })}
+                  title="Double-click to rename"
+                  className={`px-3 py-1 font-mono text-[10px] uppercase tracking-wider ${i === active ? "text-gold" : "text-textdim"}`}
+                >
+                  {name}
+                </button>
+              )}
               {spaceNames.length > 1 && <button onClick={() => removeSpace(i)} className="px-1 font-mono text-[10px] text-textdim opacity-0 transition group-hover:opacity-100 hover:text-down">×</button>}
             </span>
           ))}
