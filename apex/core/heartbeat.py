@@ -84,6 +84,8 @@ class Heartbeat:
             await self._sync_positions()
         except Exception as exc:  # never crash startup on a data hiccup
             logger.exception("Startup data load failed (continuing): {}", exc)
+        self._push_state()
+        await self._publish_kv()  # publish markets/candles immediately so the UI populates
         logger.info("Heartbeat starting — {} markets, mode={}", len(self.markets), self.broker.mode)
 
         await asyncio.gather(
@@ -149,8 +151,11 @@ class Heartbeat:
 
     def _floating_equity(self) -> float:
         """Account balance + open (floating) P&L — what a prop auditor measures."""
-        account = self.broker.account()
-        base = account.balance or self.s.starting_equity
+        try:
+            account = self.broker.account()
+            base = account.balance or self.s.starting_equity or 100_000.0
+        except Exception:  # transient broker error — fall back to a sane base
+            base = self.s.starting_equity or 100_000.0
         unrealised = sum(p.unrealised_pnl for p in self.positions.values())
         return float(base) + float(unrealised)
 
@@ -391,24 +396,43 @@ class Heartbeat:
     # ──────────────────────────────────────────────────────────────────
     #  Shared helpers
     # ──────────────────────────────────────────────────────────────────
+    def _candles(self, market: Market, minutes: int, n: int) -> list[Candle]:
+        """Candle source for signals/charts: Yahoo first (free, deep, no IG allowance),
+        IG only as a fallback. This keeps us off IG's tiny historical-data quota."""
+        from apex.backtest import yahoo
+        try:
+            c = yahoo.fetch(market.key, minutes, n)
+            if len(c) >= 40:
+                return c
+        except Exception as exc:
+            logger.debug("Yahoo candles failed for {}: {}", market.key, exc)
+        try:
+            return self.broker.candles(market.epic, minutes, n)
+        except Exception as exc:
+            logger.warning("Candle fetch failed for {} (Yahoo+broker): {}", market.key, exc)
+            return self.history.get(market.key, [])
+
     async def _seed_history(self) -> None:
         n = self.s.heartbeat.history_candles
         m = self.s.heartbeat.candle_minutes_default
         for market in self.markets:
-            candles = await asyncio.to_thread(self.broker.candles, market.epic, m, n)
+            candles = await asyncio.to_thread(self._candles, market, m, n)
             self.history[market.key] = candles
             STATE.candles[market.key] = self._candle_view(candles)   # chart has data on first load
 
     async def _refresh_market(self, market: Market) -> list[Candle]:
         n = self.s.heartbeat.history_candles
         m = self.s.heartbeat.candle_minutes_default
-        candles = await asyncio.to_thread(self.broker.candles, market.epic, m, n)
-        STATE.bump_api("ig")
+        candles = await asyncio.to_thread(self._candles, market, m, n)
         self.history[market.key] = candles
         return candles
 
     async def _sync_positions(self) -> None:
-        broker_positions = await asyncio.to_thread(self.broker.positions)
+        try:
+            broker_positions = await asyncio.to_thread(self.broker.positions)
+        except Exception as exc:  # transient IG 500s etc. — keep last known, don't crash the tier
+            logger.debug("Positions fetch failed (keeping last): {}", exc)
+            return
         # Preserve our strategy/confidence metadata where deal ids match.
         merged: dict[str, Position] = {}
         for bp in broker_positions:

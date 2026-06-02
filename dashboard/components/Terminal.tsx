@@ -70,7 +70,9 @@ export function Terminal() {
   const mainRef = useRef<HTMLElement>(null);
   const nodesRef = useRef<WNode[]>([]);
   nodesRef.current = nodes;
+  const dockedNodeRef = useRef<{ left?: WNode; right?: WNode }>({});
   const zoneRef = useRef<{ candidate: "left" | "right" | null; timer: ReturnType<typeof setTimeout> | null }>({ candidate: null, timer: null });
+  const [autoPan, setAutoPan] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [maximizedId, setMaximizedId] = useState<string | null>(null);
   const [interacting, setInteracting] = useState(false);
@@ -120,10 +122,16 @@ export function Terminal() {
     const def = WIDGETS_BY_ID[widgetId];
     if (!def) return;
     if (view !== "terminal") setView("terminal");
-    setNodes((nds) => {
-      const off = (nds.length % 6) * 28;
-      return [...nds, mk(widgetId, 60 + off, 60 + off, def.w * 60, def.h * 24)];
-    });
+    // Place it where the user is currently looking (centre of the viewport) so it's
+    // immediately visible — no need to hunt for it.
+    const w = def.w * 60, h = def.h * 24;
+    const rect = mainRef.current?.getBoundingClientRect();
+    let pos = { x: 80, y: 80 };
+    if (rect && rfRef.current?.screenToFlowPosition) {
+      pos = rfRef.current.screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height * 0.32 });
+      pos = { x: pos.x - w / 2, y: pos.y - h / 2 };
+    }
+    setNodes((nds) => [...nds, mk(widgetId, pos.x, pos.y, w, h)]);
   }, [view]);
 
   const removeWidget = useCallback((id: string) => {
@@ -150,33 +158,40 @@ export function Terminal() {
   const dockNode = useCallback((id: string, side: "left" | "right") => {
     const n = nodesRef.current.find((x) => x.id === id);
     if (!n) return;
+    dockedNodeRef.current[side] = n; // remember exact node so close() restores it
     setDock((d) => ({ ...d, [side]: n.data.widgetId }));
     setNodes((nds) => nds.filter((x) => x.id !== id));
   }, []);
 
-  const undock = useCallback((side: "left" | "right") => {
-    setDock((d) => {
-      const widgetId = d[side];
-      if (widgetId) addWidget(widgetId);
-      return { ...d, [side]: undefined };
-    });
-  }, [addWidget]);
+  // Undock: close() restores the widget to its ORIGINAL spot; a drag passes `at` to
+  // drop it where released.
+  const undock = useCallback((side: "left" | "right", at?: { x: number; y: number }) => {
+    const orig = dockedNodeRef.current[side];
+    dockedNodeRef.current[side] = undefined;
+    setDock((d) => ({ ...d, [side]: undefined }));
+    if (orig) setNodes((nds) => [...nds, at ? { ...orig, position: at } : orig]);
+  }, []);
 
-  // While dragging a node, detect proximity to the left/right edge; after a short
-  // hold show the snap preview. Release in the zone → dock that side.
+  // While dragging a node: show the snap outline IMMEDIATELY at the edge, and suppress
+  // the canvas auto-pan for 0.5s so the user can drop to dock. After 0.5s the outline
+  // clears and the camera is allowed to follow the drag.
   const onNodeDrag = useCallback((e: React.MouseEvent) => {
     const rect = mainRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const EDGE = 60;
+    const EDGE = 56;
     const x = (e as any).clientX ?? 0;
-    let z: "left" | "right" | null = null;
-    if (x <= rect.left + EDGE) z = "left";
-    else if (x >= rect.right - EDGE) z = "right";
+    const z: "left" | "right" | null = x <= rect.left + EDGE ? "left" : x >= rect.right - EDGE ? "right" : null;
     if (z !== zoneRef.current.candidate) {
       zoneRef.current.candidate = z;
       if (zoneRef.current.timer) { clearTimeout(zoneRef.current.timer); zoneRef.current.timer = null; }
-      setSnapZone(null);
-      if (z) zoneRef.current.timer = setTimeout(() => setSnapZone(z), 450);
+      if (z) {
+        setSnapZone(z);
+        setAutoPan(false);
+        zoneRef.current.timer = setTimeout(() => { setSnapZone(null); setAutoPan(true); }, 500);
+      } else {
+        setSnapZone(null);
+        setAutoPan(true);
+      }
     }
   }, []);
 
@@ -184,6 +199,7 @@ export function Terminal() {
     clearHide(); setInteracting(false);
     if (zoneRef.current.timer) { clearTimeout(zoneRef.current.timer); zoneRef.current.timer = null; }
     setSnapZone((z) => { if (z) dockNode(node.id, z); return null; });
+    setAutoPan(true);
     zoneRef.current.candidate = null;
   }, [dockNode]);
 
@@ -209,7 +225,14 @@ export function Terminal() {
     if (!def) return null;
     const w = side === "left" ? dock.leftW : dock.rightW;
     return (
-      <div className={`absolute top-0 bottom-0 z-20 p-1.5 ${side === "left" ? "left-0" : "right-0"}`} style={{ width: `${w}%` }}>
+      <div
+        className={`absolute top-0 bottom-0 z-20 p-1.5 ${side === "left" ? "left-0" : "right-0"}`}
+        style={{ width: `${w}%` }}
+        // Drag the docked window out: drop in the canvas to float, or near an edge to re-dock.
+        draggable
+        onDragStart={(e) => { e.dataTransfer.setData("application/apex-dock", side); e.dataTransfer.effectAllowed = "move"; }}
+        onDragEnd={() => setSnapZone(null)}
+      >
         <div className="apex-window h-full w-full">
           <WidgetFrame code={def.code} title={`${def.name} · docked`} onClose={() => undock(side)}>
             {state ? def.render(state) : <div className="flex h-full items-center justify-center font-mono text-[11px] text-textdim">waiting for engine…</div>}
@@ -240,15 +263,33 @@ export function Terminal() {
   const onDropWidget = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
+    setSnapZone(null);
+    const rect = mainRef.current?.getBoundingClientRect();
+    const flowPos = rfRef.current?.screenToFlowPosition
+      ? rfRef.current.screenToFlowPosition({ x: e.clientX, y: e.clientY })
+      : { x: 80, y: 80 };
+
+    // Re-positioning a docked window: near an edge → re-dock there, else float at drop.
+    const fromSide = e.dataTransfer.getData("application/apex-dock") as "left" | "right" | "";
+    if (fromSide === "left" || fromSide === "right") {
+      let toSide: "left" | "right" | null = null;
+      if (rect) { const rel = (e.clientX - rect.left) / rect.width; toSide = rel <= 0.18 ? "left" : rel >= 0.82 ? "right" : null; }
+      if (toSide) {
+        const orig = dockedNodeRef.current[fromSide];
+        dockedNodeRef.current[fromSide] = undefined;
+        dockedNodeRef.current[toSide] = orig;
+        setDock((d) => ({ ...d, [fromSide]: undefined, [toSide!]: orig?.data.widgetId ?? d[fromSide] }));
+      } else {
+        undock(fromSide, flowPos);
+      }
+      return;
+    }
+
     const id = e.dataTransfer.getData("application/apex-widget");
     if (!id) return;
-    const inst = rfRef.current;
-    const pos = inst?.screenToFlowPosition
-      ? inst.screenToFlowPosition({ x: e.clientX, y: e.clientY })
-      : { x: 80, y: 80 };
     if (view !== "terminal") setView("terminal");
-    addWidgetAt(id, pos);
-  }, [addWidgetAt, view]);
+    addWidgetAt(id, flowPos);
+  }, [addWidgetAt, undock, view]);
 
   const toggleFullscreen = () => {
     if (typeof document === "undefined") return;
@@ -355,7 +396,18 @@ export function Terminal() {
                       <button
                         key={w.id}
                         draggable
-                        onDragStart={(e) => { e.dataTransfer.setData("application/apex-widget", w.id); e.dataTransfer.effectAllowed = "copy"; }}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData("application/apex-widget", w.id);
+                          e.dataTransfer.effectAllowed = "copy";
+                          // Carry a little "tab" chip on the cursor.
+                          const ghost = document.createElement("div");
+                          ghost.textContent = `${w.code}  ${w.name}`;
+                          ghost.style.cssText = "position:absolute;top:-1000px;left:-1000px;padding:7px 12px;background:#1b1b1f;border:1px solid #c9a84c;border-radius:8px;color:#c9a84c;font:600 12px 'DM Mono',monospace;box-shadow:0 8px 24px rgba(0,0,0,.6)";
+                          document.body.appendChild(ghost);
+                          e.dataTransfer.setDragImage(ghost, 12, 12);
+                          setTimeout(() => document.body.removeChild(ghost), 0);
+                        }}
+                        onDragEnd={() => { setDragOver(false); setSnapZone(null); }}
                         onClick={() => addWidget(w.id)}
                         title={`Drag onto the canvas, or click to add ${w.name}`}
                         className="group/item flex w-full cursor-grab items-center gap-2 px-3 py-1.5 text-left transition hover:bg-bg3 active:cursor-grabbing"
@@ -386,8 +438,17 @@ export function Terminal() {
           <main
             ref={mainRef}
             className="relative min-h-0 flex-1"
-            onDragOver={(e) => { if (e.dataTransfer.types.includes("application/apex-widget")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setDragOver(true); } }}
-            onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
+            onDragOver={(e) => {
+              const types = e.dataTransfer.types;
+              if (types.includes("application/apex-dock")) {
+                e.preventDefault(); e.dataTransfer.dropEffect = "move";
+                const rect = mainRef.current?.getBoundingClientRect();
+                if (rect) { const rel = (e.clientX - rect.left) / rect.width; setSnapZone(rel <= 0.18 ? "left" : rel >= 0.82 ? "right" : null); }
+              } else if (types.includes("application/apex-widget")) {
+                e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setDragOver(true);
+              }
+            }}
+            onDragLeave={(e) => { if (e.currentTarget === e.target) { setDragOver(false); setSnapZone(null); } }}
             onDrop={onDropWidget}
           >
             {view === "terminal" ? (
@@ -409,6 +470,7 @@ export function Terminal() {
                 fitView
                 panOnDrag
                 zoomOnScroll
+                autoPanOnNodeDrag={autoPan}
                 selectionOnDrag={false}
                 deleteKeyCode={null}
               >
@@ -429,17 +491,17 @@ export function Terminal() {
             {view === "terminal" && dockPanel("left")}
             {view === "terminal" && dockPanel("right")}
 
-            {/* Snap preview while dragging a widget toward an edge */}
+            {/* Snap preview while dragging a widget toward an edge (outline, not a fill) */}
             {view === "terminal" && snapZone && (
               <div
-                className="pointer-events-none absolute top-0 bottom-0 z-40 rounded-lg border-2 border-dashed border-gold/70 bg-gold/10"
-                style={{ [snapZone]: 0, width: `${snapZone === "left" ? dock.leftW : dock.rightW}%` } as React.CSSProperties}
+                className="pointer-events-none absolute top-1.5 bottom-1.5 z-40 rounded-lg border-2 border-dashed border-gold"
+                style={{ [snapZone]: 6, width: `calc(${snapZone === "left" ? dock.leftW : dock.rightW}% - 12px)`, background: "rgba(201,168,76,0.06)" } as React.CSSProperties}
               />
             )}
 
-            {/* Drag-over highlight when dropping a widget from the sidebar */}
+            {/* Subtle outline while dragging a widget in from the sidebar */}
             {dragOver && view === "terminal" && (
-              <div className="pointer-events-none absolute inset-2 z-10 rounded-lg border-2 border-dashed border-gold/60 bg-gold/5" />
+              <div className="pointer-events-none absolute inset-2 z-10 rounded-lg border-2 border-dashed border-gold/50" />
             )}
 
             {/* Maximize overlay: fills the canvas region, leaves pan/zoom untouched */}
