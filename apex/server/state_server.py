@@ -99,6 +99,23 @@ def create_app() -> FastAPI:
         _check_secret(x_apex_secret)
         return await asyncio.to_thread(onboarding.update, payload.model_dump(exclude_none=True))
 
+    @app.post("/backtest")
+    async def backtest(payload: dict, x_apex_secret: str | None = Header(default=None)) -> dict:
+        _check_secret(x_apex_secret)
+
+        def _run() -> dict:
+            from apex.backtest.runner import run_request
+            from apex.ig.client import create_broker
+
+            broker = create_broker(settings)
+            try:
+                broker.connect()
+            except Exception:
+                pass  # run_request handles a paper fallback via create_broker semantics
+            return run_request(broker, settings, payload)
+
+        return await asyncio.to_thread(_run)
+
     @app.post("/onboarding/reset")
     async def onboarding_reset(x_apex_secret: str | None = Header(default=None)) -> OnboardingStatus:
         _check_secret(x_apex_secret)

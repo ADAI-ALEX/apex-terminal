@@ -21,6 +21,8 @@ from loguru import logger
 CONFIG_KEY = "apex:config"            # onboarding config written by the dashboard
 STATE_KEY = "apex:state"              # live snapshot pushed by the laptop
 STATUS_KEY = "apex:onboarding_status" # algo-confirmed onboarding status
+BACKTEST_REQ_KEY = "apex:backtest_request"   # dashboard → laptop: run this backtest
+BACKTEST_RES_KEY = "apex:backtest_result"    # laptop → dashboard: backtest result
 
 _TIMEOUT = 8
 
