@@ -92,7 +92,7 @@ class Heartbeat:
             self._loop(self._tier3, self.s.heartbeat.tier3_portfolio_seconds, "Tier3"),
             self._loop(self._health, self.s.heartbeat.health_seconds, "Health"),
             self._loop(self._config_watch, 8, "ConfigWatch"),
-            self._loop(self._backtest_watch, 5, "Backtest"),
+            self._loop(self._backtest_watch, 2, "Backtest"),
         )
 
     def stop(self) -> None:
