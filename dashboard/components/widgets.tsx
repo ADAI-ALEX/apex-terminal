@@ -235,63 +235,99 @@ function LogBody({ state }: { state: AlgoState }) {
 }
 
 function CalculatorBody() {
-  const [disp, setDisp] = useState("0");
-  const [acc, setAcc] = useState<number | null>(null);
+  const [current, setCurrent] = useState("0");
+  const [previous, setPrevious] = useState<number | null>(null);
   const [op, setOp] = useState<string | null>(null);
-  const [fresh, setFresh] = useState(true);
+  const [overwrite, setOverwrite] = useState(true);
 
-  const apply = (a: number, b: number, o: string) =>
-    o === "+" ? a + b : o === "−" ? a - b : o === "×" ? a * b : o === "÷" ? (b === 0 ? NaN : a / b) : b;
+  const fmt = (n: number) => {
+    if (!Number.isFinite(n)) return "Error";
+    const s = Math.abs(n) >= 1e12 || (Math.abs(n) < 1e-6 && n !== 0) ? n.toExponential(6) : String(+n.toPrecision(12));
+    return s;
+  };
+  const calc = (a: number, b: number, o: string) =>
+    o === "+" ? a + b : o === "−" ? a - b : o === "×" ? a * b : o === "÷" ? a / b : b;
 
-  const digit = (d: string) => {
-    setDisp((p) => (fresh || p === "0" ? (d === "." ? "0." : d) : d === "." && p.includes(".") ? p : p + d));
-    setFresh(false);
+  const inputDigit = (d: string) => {
+    setCurrent((c) => (overwrite ? d : c === "0" ? d : c + d));
+    setOverwrite(false);
+  };
+  const inputDot = () => {
+    setCurrent((c) => (overwrite ? "0." : c.includes(".") ? c : c + "."));
+    setOverwrite(false);
   };
   const chooseOp = (o: string) => {
-    const cur = parseFloat(disp);
-    if (acc != null && op && !fresh) { const r = apply(acc, cur, op); setAcc(r); setDisp(fmt(r)); }
-    else setAcc(cur);
-    setOp(o); setFresh(true);
+    const cur = parseFloat(current);
+    if (previous != null && op && !overwrite) {
+      const r = calc(previous, cur, op);
+      setPrevious(r); setCurrent(fmt(r));
+    } else {
+      setPrevious(cur);
+    }
+    setOp(o); setOverwrite(true);
   };
   const equals = () => {
-    if (acc == null || !op) return;
-    const r = apply(acc, parseFloat(disp), op);
-    setDisp(fmt(r)); setAcc(null); setOp(null); setFresh(true);
+    if (previous == null || op == null) return;
+    const r = calc(previous, parseFloat(current), op);
+    setCurrent(fmt(r)); setPrevious(null); setOp(null); setOverwrite(true);
   };
-  const clear = () => { setDisp("0"); setAcc(null); setOp(null); setFresh(true); };
-  const fmt = (n: number) => (Number.isFinite(n) ? String(+n.toPrecision(12)) : "Error");
+  const clearAll = () => { setCurrent("0"); setPrevious(null); setOp(null); setOverwrite(true); };
+  const backspace = () => setCurrent((c) => (overwrite || c.length <= 1 ? "0" : c.slice(0, -1)));
+  const percent = () => { setCurrent((c) => fmt(parseFloat(c) / 100)); setOverwrite(true); };
+  const negate = () => setCurrent((c) => fmt(-parseFloat(c)));
 
-  const Btn = ({ label, onClick, kind }: { label: string; onClick: () => void; kind?: "op" | "eq" | "fn" }) => (
+  // Keyboard support.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const k = e.key;
+      if (k >= "0" && k <= "9") inputDigit(k);
+      else if (k === ".") inputDot();
+      else if (k === "+") chooseOp("+");
+      else if (k === "-") chooseOp("−");
+      else if (k === "*") chooseOp("×");
+      else if (k === "/") { e.preventDefault(); chooseOp("÷"); }
+      else if (k === "Enter" || k === "=") { e.preventDefault(); equals(); }
+      else if (k === "Backspace") backspace();
+      else if (k === "Escape") clearAll();
+      else if (k === "%") percent();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  const Key = ({ label, onClick, kind, span }: { label: string; onClick: () => void; kind?: "op" | "eq" | "fn"; span?: boolean }) => (
     <button
       onClick={onClick}
-      className={`rounded-md py-2 font-mono text-sm transition active:scale-95 ${
+      className={`flex items-center justify-center rounded-md font-mono text-[clamp(13px,2.2vw,18px)] transition active:scale-[0.97] ${span ? "col-span-2" : ""} ${
         kind === "eq" ? "bg-gold text-black hover:bg-gold2"
           : kind === "op" ? "bg-gold/15 text-gold hover:bg-gold/25"
-          : kind === "fn" ? "bg-bg3 text-textdim hover:text-textmid"
-          : "bg-bg3 text-textmid hover:bg-[#26262b]"
+          : kind === "fn" ? "bg-bg3 text-down/80 hover:text-down"
+          : "bg-bg3 text-textmid hover:text-gold"
       }`}
     >{label}</button>
   );
 
   return (
-    <div className="flex h-full flex-col gap-2 p-3">
-      <div className="rounded-md border border-border bg-bg px-3 py-3 text-right font-mono text-2xl text-textmid">
-        <div className="truncate">{disp}</div>
+    <div className="flex h-full flex-col gap-2 p-2.5">
+      <div className="flex flex-col justify-end rounded-md border border-border bg-bg px-3 py-2 text-right">
+        <div className="h-4 truncate font-mono text-[11px] text-textdim">{previous != null ? `${fmt(previous)} ${op ?? ""}` : " "}</div>
+        <div className="truncate font-mono text-[clamp(20px,4vw,30px)] font-medium text-textmid">{current}</div>
       </div>
-      <div className="grid flex-1 grid-cols-4 gap-1.5">
-        <Btn label="C" kind="fn" onClick={clear} />
-        <Btn label="±" kind="fn" onClick={() => setDisp((p) => fmt(-parseFloat(p)))} />
-        <Btn label="%" kind="fn" onClick={() => setDisp((p) => fmt(parseFloat(p) / 100))} />
-        <Btn label="÷" kind="op" onClick={() => chooseOp("÷")} />
-        {["7", "8", "9"].map((d) => <Btn key={d} label={d} onClick={() => digit(d)} />)}
-        <Btn label="×" kind="op" onClick={() => chooseOp("×")} />
-        {["4", "5", "6"].map((d) => <Btn key={d} label={d} onClick={() => digit(d)} />)}
-        <Btn label="−" kind="op" onClick={() => chooseOp("−")} />
-        {["1", "2", "3"].map((d) => <Btn key={d} label={d} onClick={() => digit(d)} />)}
-        <Btn label="+" kind="op" onClick={() => chooseOp("+")} />
-        <Btn label="0" onClick={() => digit("0")} />
-        <Btn label="." onClick={() => digit(".")} />
-        <button onClick={equals} className="col-span-2 rounded-md bg-gold py-2 font-mono text-sm text-black transition hover:bg-gold2 active:scale-95">=</button>
+      <div className="grid min-h-0 flex-1 grid-cols-4 grid-rows-5 gap-1.5">
+        <Key label="AC" kind="fn" onClick={clearAll} />
+        <Key label="⌫" kind="fn" onClick={backspace} />
+        <Key label="%" kind="fn" onClick={percent} />
+        <Key label="÷" kind="op" onClick={() => chooseOp("÷")} />
+        {["7", "8", "9"].map((d) => <Key key={d} label={d} onClick={() => inputDigit(d)} />)}
+        <Key label="×" kind="op" onClick={() => chooseOp("×")} />
+        {["4", "5", "6"].map((d) => <Key key={d} label={d} onClick={() => inputDigit(d)} />)}
+        <Key label="−" kind="op" onClick={() => chooseOp("−")} />
+        {["1", "2", "3"].map((d) => <Key key={d} label={d} onClick={() => inputDigit(d)} />)}
+        <Key label="+" kind="op" onClick={() => chooseOp("+")} />
+        <Key label="±" onClick={negate} />
+        <Key label="0" onClick={() => inputDigit("0")} />
+        <Key label="." onClick={inputDot} />
+        <Key label="=" kind="eq" onClick={equals} />
       </div>
     </div>
   );
