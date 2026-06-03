@@ -30,6 +30,12 @@ export function LiveChart({ state }: { state: AlgoState }) {
   const [loading, setLoading] = useState(false);
   const [empty, setEmpty] = useState(false);
   const [chartReady, setChartReady] = useState(false);
+  // Fullscreen is unreliable on phones (iOS Safari blocks it) — hide the button there.
+  const [canFs, setCanFs] = useState(false);
+  useEffect(() => {
+    const phone = Math.min(window.innerWidth, window.innerHeight) <= 500;
+    setCanFs(!phone && document.fullscreenEnabled === true);
+  }, []);
 
   const active = selected && markets.includes(selected) ? selected : markets[0] ?? "";
   const snap = active ? state.indicators?.[active] : undefined;
@@ -98,8 +104,16 @@ export function LiveChart({ state }: { state: AlgoState }) {
     const key = `${active}:${interval}:${mode}`;
     if (rows.length && fittedFor.current !== key) {
       fittedFor.current = key;
-      // Fit on the next frame so the price + time scales size to the freshly-set data.
-      requestAnimationFrame(() => chartRef.current?.timeScale().fitContent());
+      // Show the most recent ~120 bars; the rest of the (deep) history stays loaded so
+      // zooming out / scrolling back reveals it automatically. Only re-window when the
+      // instrument/interval/mode changes — a 60s refresh keeps the user's current view.
+      requestAnimationFrame(() => {
+        const ts = chartRef.current?.timeScale();
+        if (!ts) return;
+        const WINDOW = 120;
+        if (rows.length > WINDOW) ts.setVisibleLogicalRange({ from: rows.length - WINDOW, to: rows.length + 1 });
+        else ts.fitContent();
+      });
     }
   }, [active, interval, mode]);
   const redrawRef = useRef(redraw);
@@ -184,7 +198,9 @@ export function LiveChart({ state }: { state: AlgoState }) {
             <button onClick={() => setMode("candles")} className={`px-2 py-1 ${mode === "candles" ? "bg-gold/15 text-gold" : "text-textmid hover:text-gold"}`}>Candles</button>
             <button onClick={() => setMode("line")} className={`border-l border-border px-2 py-1 ${mode === "line" ? "bg-gold/15 text-gold" : "text-textmid hover:text-gold"}`}>Line</button>
           </div>
-          <button onClick={toggleFullscreen} title="Fullscreen" className="rounded border border-border px-2 py-1 font-mono text-[11px] text-textmid transition hover:border-gold hover:text-gold">⛶</button>
+          {canFs && (
+            <button onClick={toggleFullscreen} title="Fullscreen" className="rounded border border-border px-2 py-1 font-mono text-[11px] text-textmid transition hover:border-gold hover:text-gold">⛶</button>
+          )}
         </div>
       </div>
 

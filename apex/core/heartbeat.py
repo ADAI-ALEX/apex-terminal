@@ -407,25 +407,25 @@ class Heartbeat:
         from apex.backtest import yahoo
 
         intervals = (("5m", 5), ("15m", 15), ("1h", 60), ("1d", 1440))
-        bars = 250
-        payload: dict[str, dict[str, list[dict]]] = {}
+        bars = 600  # deep enough that the dashboard can scroll/zoom back through history
+        published = 0
         for market in self.markets:
-            per: dict[str, list[dict]] = {}
             for label, minutes in intervals:
                 try:
                     candles = await asyncio.to_thread(yahoo.fetch, market.key, minutes, bars)
                     if candles:
-                        per[label] = self._candle_view(candles, limit=bars)
+                        # One KV key per instrument+interval so the dashboard reads only
+                        # the series it needs (small, fast) instead of one giant blob.
+                        await asyncio.to_thread(
+                            kv.kv_set,
+                            f"{kv.CHART_KEY}:{market.key}:{label}",
+                            self._candle_view(candles, limit=bars),
+                        )
+                        published += 1
                 except Exception as exc:
                     logger.debug("Chart publish {} {} failed: {}", market.key, label, exc)
-            if per:
-                payload[market.key] = per
-        if payload:
-            try:
-                await asyncio.to_thread(kv.kv_set, kv.CHART_KEY, payload)
-                logger.debug("Published chart candles for {} instrument(s).", len(payload))
-            except Exception as exc:
-                logger.debug("KV chart publish skipped: {}", exc)
+        if published:
+            logger.debug("Published {} chart series to KV.", published)
 
     # ──────────────────────────────────────────────────────────────────
     #  Shared helpers
