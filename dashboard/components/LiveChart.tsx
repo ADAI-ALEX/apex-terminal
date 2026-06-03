@@ -46,7 +46,9 @@ export function LiveChart({ state }: { state: AlgoState }) {
   const candleRef = useRef<any>(null);
   const lineRef = useRef<any>(null);
   const fittedFor = useRef("");
-  const dataRef = useRef<Candle[]>([]);
+  const barsRef = useRef<Candle[]>([]);   // all loaded bars (ascending, unique by time)
+  const hasMoreRef = useRef(true);         // older history may still be fetchable
+  const loadingMoreRef = useRef(false);    // a lazy older-bars fetch is in flight
   // Always read the freshest engine state for the candles fallback: the fetch effect
   // closes over this ref (not the prop), so late-arriving KV candles are still used.
   const stateRef = useRef(state);
@@ -97,7 +99,7 @@ export function LiveChart({ state }: { state: AlgoState }) {
   const redraw = useCallback(() => {
     const candle = candleRef.current, line = lineRef.current;
     if (!candle || !line) return;
-    const rows = dataRef.current;
+    const rows = barsRef.current;
     setEmpty(rows.length === 0);
     if (mode === "candles") { candle.setData(rows); line.setData([]); }
     else { candle.setData([]); line.setData(rows.map((c) => ({ time: c.time, value: c.close }))); }
@@ -122,42 +124,82 @@ export function LiveChart({ state }: { state: AlgoState }) {
   // Re-draw when the chart becomes ready (mount) or the draw config changes (mode).
   useEffect(() => { redraw(); }, [redraw, chartReady]);
 
-  // Fetch candles whenever instrument or interval changes (and refresh every 60s).
-  // Independent of chart readiness: results land in dataRef and redraw() paints them
-  // whenever the chart is up — so neither order (fetch-first or chart-first) goes blank.
+  // One page of candles from the API. `before` (unix secs) asks for older bars; the
+  // server slices the engine's deep KV history and reports whether yet-older bars exist.
+  const fetchChunk = useCallback(async (before?: number): Promise<{ rows: Candle[]; hasMore: boolean }> => {
+    const q = `/api/prices?symbol=${encodeURIComponent(active)}&interval=${interval}&limit=250${before ? `&before=${before}` : ""}`;
+    try {
+      const res = await fetch(q, { cache: "no-store" });
+      const j = await res.json();
+      let rows: Candle[] = Array.isArray(j.candles) ? j.candles : [];
+      if (!rows.length && !before) rows = (stateRef.current.candles?.[active] ?? []) as Candle[];
+      const seen = new Set<number>();
+      rows = [...rows].sort((a, b) => a.time - b.time).filter((c) => (seen.has(c.time) ? false : (seen.add(c.time), true)));
+      return { rows, hasMore: !!j.hasMore };
+    } catch {
+      if (!before) return { rows: (stateRef.current.candles?.[active] ?? []) as Candle[], hasMore: false };
+      return { rows: [], hasMore: false };
+    }
+  }, [active, interval]);
+
+  // Merge a page into the loaded set (dedupe by time, ascending) and repaint.
+  const mergeAndDraw = useCallback((page: Candle[]) => {
+    if (page.length) {
+      const map = new Map<number, Candle>();
+      for (const c of barsRef.current) map.set(c.time, c);
+      for (const c of page) map.set(c.time, c);
+      barsRef.current = [...map.values()].sort((a, b) => a.time - b.time);
+    }
+    redrawRef.current();
+  }, []);
+
+  // Initial load on instrument/interval change, then a light 60s refresh of recent bars.
   useEffect(() => {
     if (!active) return;
     let alive = true;
-    let timer: ReturnType<typeof setTimeout>;
+    barsRef.current = [];
+    hasMoreRef.current = true;
+    loadingMoreRef.current = false;
+    fittedFor.current = ""; // re-window the view for the new series
+    setLoading(true);
+    (async () => {
+      const { rows, hasMore } = await fetchChunk();
+      if (!alive) return;
+      barsRef.current = rows;
+      hasMoreRef.current = hasMore;
+      redrawRef.current();
+      setLoading(false);
+    })();
+    const id = setInterval(async () => {
+      const { rows } = await fetchChunk();
+      if (alive) mergeAndDraw(rows);
+    }, 60_000);
+    return () => { alive = false; clearInterval(id); };
+  }, [active, interval, fetchChunk, mergeAndDraw]);
 
-    const apply = (rows: Candle[]) => {
-      const seen = new Set<number>();
-      dataRef.current = [...rows]
-        .sort((a, b) => a.time - b.time)
-        .filter((c) => (seen.has(c.time) ? false : (seen.add(c.time), true)));
-      if (alive) redrawRef.current();
+  // Lazy history: when the user scrolls / zooms near the left edge, fetch older bars and
+  // prepend them — so the chart keeps revealing earlier data automatically as you move back.
+  useEffect(() => {
+    if (!chartReady || !chartRef.current) return;
+    const ts = chartRef.current.timeScale();
+    const onRange = (range: { from: number; to: number } | null) => {
+      if (!range || !barsRef.current.length) return;
+      if (range.from > 8 || !hasMoreRef.current || loadingMoreRef.current) return;
+      loadingMoreRef.current = true;
+      const before = barsRef.current[0].time;
+      void (async () => {
+        try {
+          const { rows, hasMore } = await fetchChunk(before);
+          mergeAndDraw(rows);                       // prepend; setData keeps the time view
+          hasMoreRef.current = hasMore && rows.length > 0;
+        } finally {
+          loadingMoreRef.current = false;
+        }
+      })();
     };
-
-    const load = async (showSpinner: boolean) => {
-      if (showSpinner) setLoading(true);
-      try {
-        const res = await fetch(`/api/prices?symbol=${encodeURIComponent(active)}&interval=${interval}`, { cache: "no-store" });
-        const j = await res.json();
-        let rows: Candle[] = Array.isArray(j.candles) ? j.candles : [];
-        if (!rows.length) rows = (stateRef.current.candles?.[active] ?? []) as Candle[]; // fallback: engine candles
-        apply(rows);
-      } catch {
-        apply((stateRef.current.candles?.[active] ?? []) as Candle[]); // network down → engine candles
-      } finally {
-        if (alive && showSpinner) setLoading(false);
-      }
-    };
-
-    void load(true);
-    const tick = () => { void load(false); timer = setTimeout(tick, 60_000); };
-    timer = setTimeout(tick, 60_000);
-    return () => { alive = false; clearTimeout(timer); };
-  }, [active, interval]);
+    ts.subscribeVisibleLogicalRangeChange(onRange);
+    return () => ts.unsubscribeVisibleLogicalRangeChange(onRange);
+  }, [chartReady, fetchChunk, mergeAndDraw]);
 
   // Expand JUST the chart to the whole screen. If the terminal was already fullscreen,
   // leaving chart-fullscreen (via this button) returns to the fullscreen terminal; if it

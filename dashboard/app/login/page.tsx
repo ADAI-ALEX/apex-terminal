@@ -37,7 +37,7 @@ export default function LoginPage() {
         <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.3em] text-gold">
           ADAI Systems
         </div>
-        <h1 className="mb-6 text-2xl font-bold">Apex Algo</h1>
+        <h1 className="mb-6 text-2xl font-bold">Apex Terminal</h1>
 
         <label className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-textdim">
           Username
