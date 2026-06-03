@@ -28,9 +28,13 @@ export function chartColors() {
   const fallback = { bg: "#0a0a0a", text: "#9a9a9a", grid: "#1c1c21", border: "#2c2c32" };
   if (typeof window === "undefined") return fallback;
   const cs = getComputedStyle(document.documentElement);
+  // Our CSS vars store space-separated channels ("160 160 160"). lightweight-charts'
+  // colour parser only accepts comma-separated rgb() — feeding it the space form throws
+  // "Cannot parse color", which aborts chart creation and leaves the chart blank. So
+  // normalise to "rgb(160, 160, 160)".
   const rgb = (name: string, f: string) => {
     const v = cs.getPropertyValue(name).trim();
-    return v ? `rgb(${v})` : f;
+    return v ? `rgb(${v.split(/\s+/).join(", ")})` : f;
   };
   return {
     bg: rgb("--c-bg", fallback.bg),

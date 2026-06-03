@@ -68,10 +68,6 @@ export function Terminal() {
   const [spaceNames, setSpaceNames] = useState<string[]>(["MAIN"]);
   const [dock, setDock] = useState<DockState>(DEFAULT_DOCK);
   const [snapZone, setSnapZone] = useState<Side | null>(null);
-  // Auto-pan starts OFF and is switched on only after a 1s edge-hold. React Flow only
-  // *starts* its auto-pan loop while this is true, so defaulting it off is what keeps
-  // the map still for the first second (then we flip it on for the "auto move").
-  const [autoPan, setAutoPan] = useState(false);
 
   const store = useRef<Persisted | null>(null);
   const activeRef = useRef(0);
@@ -84,12 +80,34 @@ export function Terminal() {
   const dockedNodeRef = useRef<{ left?: WNode; right?: WNode; top?: WNode; bottom?: WNode }>({});
   const dragTimer = useRef<ReturnType<typeof setTimeout> | null>(null);   // 1s edge-hold → auto-pan
   const dragEdgeRef = useRef<Side | null | undefined>(undefined);          // current edge under cursor
+  const panRAF = useRef(0);                                                // manual auto-pan rAF handle
+  const draggedIdRef = useRef<string | null>(null);                        // node being dragged
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [maximizedId, setMaximizedId] = useState<string | null>(null);
   const [interacting, setInteracting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [renaming, setRenaming] = useState<{ i: number; value: string } | null>(null);
   const [light, setLight] = useState(false);
+  const [isPhone, setIsPhone] = useState(false);   // small touch device (short side ≤ 500px)
+  const [isSmall, setIsSmall] = useState(false);    // narrow viewport → overlay sidebar
+  const [portrait, setPortrait] = useState(false);
+  const autoSidebar = useRef(true);                 // only auto-collapse the sidebar once
+
+  // Responsive: track viewport size/orientation so the terminal fits phones & tablets.
+  useEffect(() => {
+    const check = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      setIsPhone(Math.min(w, h) <= 500);
+      setPortrait(h > w);
+      const small = w < 768;
+      setIsSmall(small);
+      if (small && autoSidebar.current) { setSidebarOpen(false); autoSidebar.current = false; }
+    };
+    check();
+    window.addEventListener("resize", check);
+    window.addEventListener("orientationchange", check);
+    return () => { window.removeEventListener("resize", check); window.removeEventListener("orientationchange", check); };
+  }, []);
 
   // Track the active theme so the canvas grid recolours with Dark/Light.
   useEffect(() => {
@@ -204,8 +222,34 @@ export function Terminal() {
 
   const clearDragTimer = () => { if (dragTimer.current) { clearTimeout(dragTimer.current); dragTimer.current = null; } };
 
+  // Manual auto-pan (React Flow's built-in can't be re-gated mid-drag once started — it
+  // would keep panning after you leave the edge and skip the 1s lock the next time). We
+  // scroll the viewport ourselves and shift the dragged node by the inverse so it stays
+  // under the cursor. Fully start/stop-able, so every edge contact gets a fresh 1s hold.
+  const stopAutoPan = useCallback(() => {
+    if (panRAF.current) { cancelAnimationFrame(panRAF.current); panRAF.current = 0; }
+  }, []);
+  const startAutoPan = useCallback((edge: Side) => {
+    stopAutoPan();
+    const STEP = 14;
+    const tick = () => {
+      const vp = rfRef.current?.getViewport?.();
+      if (vp) {
+        const dx = edge === "left" ? STEP : edge === "right" ? -STEP : 0;
+        const dy = edge === "top" ? STEP : edge === "bottom" ? -STEP : 0;
+        rfRef.current.setViewport({ x: vp.x + dx, y: vp.y + dy, zoom: vp.zoom });
+        const id = draggedIdRef.current;
+        if (id) setNodes((nds) => nds.map((n) => (n.id === id
+          ? { ...n, position: { x: n.position.x - dx / vp.zoom, y: n.position.y - dy / vp.zoom } }
+          : n)));
+      }
+      panRAF.current = requestAnimationFrame(tick);
+    };
+    panRAF.current = requestAnimationFrame(tick);
+  }, [stopAutoPan]);
+
   // While dragging a node toward an edge: show the dock outline and hold the map still.
-  // If still held at the same edge after 1s, drop the outline and let the canvas auto-pan
+  // If still held at the same edge after 1s, drop the outline and start auto-panning
   // ("auto workspace move"). Releasing while the outline is up docks to that side.
   const onNodeDrag = useCallback((e: React.MouseEvent) => {
     const rect = mainRef.current?.getBoundingClientRect();
@@ -219,21 +263,22 @@ export function Terminal() {
       : y <= rect.top + EDGE ? "top"
       : y >= rect.bottom - EDGE ? "bottom"
       : null;
-    if (z === dragEdgeRef.current) return; // unchanged → keep current outline/timer
+    if (z === dragEdgeRef.current) return; // unchanged → keep current outline/pan
     dragEdgeRef.current = z;
     clearDragTimer();
-    setAutoPan(false);        // hold the map still while the dock outline is offered
+    stopAutoPan();            // leaving an edge stops its pan immediately → fresh lock next time
     setSnapZone(z);
-    if (z) dragTimer.current = setTimeout(() => { setSnapZone(null); setAutoPan(true); }, 1000);
-  }, []);
+    if (z) dragTimer.current = setTimeout(() => { setSnapZone(null); startAutoPan(z); }, 1000);
+  }, [startAutoPan, stopAutoPan]);
 
   const onNodeDragStop = useCallback((_e: React.MouseEvent, node: Node) => {
     clearHide(); setInteracting(false);
     clearDragTimer();
+    stopAutoPan();
     dragEdgeRef.current = undefined;
-    setAutoPan(false);
+    draggedIdRef.current = null;
     setSnapZone((z) => { if (z) dockNode(node.id, z); return null; });
-  }, [dockNode]);
+  }, [dockNode, stopAutoPan]);
 
   // Resize a docked panel by dragging its inner edge — horizontal for L/R, vertical for T/B.
   const startDockResize = (side: Side) => (e: React.MouseEvent) => {
@@ -402,9 +447,17 @@ export function Terminal() {
 
   return (
     <TerminalContext.Provider value={{ state, removeWidget, toggleMaximize, deselectAll, maximizedId }}>
-      <div ref={rootRef} className="flex h-screen w-screen flex-col overflow-hidden bg-bg text-textmid">
+      <div ref={rootRef} data-apex-root className="relative flex h-screen w-screen flex-col overflow-hidden bg-bg text-textmid">
+        {/* Phones must be landscape — the terminal is too dense for portrait. */}
+        {isPhone && portrait && (
+          <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center gap-4 bg-bg p-8 text-center">
+            <div className="text-5xl">⟳</div>
+            <div className="font-mono text-sm uppercase tracking-[0.3em] text-gold">Rotate your device</div>
+            <p className="max-w-xs text-sm text-textdim">Apex Terminal runs in landscape. Turn your phone sideways to continue.</p>
+          </div>
+        )}
         {/* ── Top bar ── */}
-        <header className="flex items-center gap-3 border-b border-border bg-bg2 px-3 py-1.5">
+        <header className="flex flex-wrap items-center gap-2 border-b border-border bg-bg2 px-3 py-1.5 sm:gap-3">
           <span className="font-mono text-sm font-bold tracking-[0.25em] text-gold">APEX</span>
           <div className="flex overflow-hidden rounded border border-border font-mono text-[10px]">
             <button onClick={() => setView("terminal")} className={`px-3 py-1 uppercase tracking-wider ${view === "terminal" ? "bg-gold/15 text-gold" : "text-textdim hover:text-textmid"}`}>Terminal</button>
@@ -415,7 +468,7 @@ export function Terminal() {
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { const m = WIDGETS.find((w) => `${w.name} ${w.code}`.toLowerCase().includes(query.trim().toLowerCase())); if (m) { addWidget(m.id); setQuery(""); } } }}
             placeholder="COMMAND OR SEARCH WIDGETS · ENTER"
-            className="flex-1 rounded border border-border bg-bg3 px-3 py-1 font-mono text-[11px] uppercase tracking-wider text-textmid outline-none placeholder:text-textdim focus:border-gold"
+            className="order-last w-full min-w-0 rounded border border-border bg-bg3 px-3 py-1 font-mono text-[11px] uppercase tracking-wider text-textmid outline-none placeholder:text-textdim focus:border-gold sm:order-none sm:w-auto sm:flex-1"
           />
           <StatusDot status={status} mode={state?.mode} />
           <Clock />
@@ -424,10 +477,12 @@ export function Terminal() {
         </header>
 
         {/* ── Body ── */}
-        <div className="flex min-h-0 flex-1">
-          {/* Sidebar */}
+        <div className="relative flex min-h-0 flex-1">
+          {/* Sidebar — overlay on small screens so it doesn't eat canvas width */}
           {sidebarOpen ? (
-            <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-bg2">
+            <>
+              {isSmall && <div className="absolute inset-0 z-30 bg-black/50" onClick={() => setSidebarOpen(false)} />}
+            <aside className={`flex w-56 flex-col border-r border-border bg-bg2 ${isSmall ? "absolute left-0 top-0 bottom-0 z-40" : "shrink-0"}`}>
               <div className="flex items-center justify-between border-b border-border px-3 py-2">
                 <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-gold">Widgets</span>
                 <button onClick={() => setSidebarOpen(false)} title="Hide sidebar" className="px-1 font-mono text-textdim hover:text-gold">‹</button>
@@ -453,7 +508,7 @@ export function Terminal() {
                           setTimeout(() => document.body.removeChild(ghost), 0);
                         }}
                         onDragEnd={() => { setDragOver(false); setSnapZone(null); }}
-                        onClick={() => addWidget(w.id)}
+                        onClick={() => { addWidget(w.id); if (isSmall) setSidebarOpen(false); }}
                         title={`Drag onto the canvas, or click to add ${w.name}`}
                         className="group/item flex w-full cursor-grab items-center gap-2 px-3 py-1.5 text-left transition hover:bg-bg3 active:cursor-grabbing"
                       >
@@ -473,6 +528,7 @@ export function Terminal() {
                 <SignOutButton />
               </div>
             </aside>
+            </>
           ) : (
             <button onClick={() => setSidebarOpen(true)} title="Show widgets" className="flex w-6 shrink-0 items-center justify-center border-r border-border bg-bg2 transition hover:bg-bg3">
               <span className="font-mono text-[9px] uppercase tracking-[0.3em] text-gold" style={{ writingMode: "vertical-rl" }}>› Widgets</span>
@@ -507,7 +563,7 @@ export function Terminal() {
                 onInit={(inst) => { rfRef.current = inst; }}
                 onMoveStart={startInteract}
                 onMoveEnd={(e) => endInteract(e)}
-                onNodeDragStart={() => { startInteract(); dragEdgeRef.current = undefined; setAutoPan(false); clearDragTimer(); }}
+                onNodeDragStart={(_e, node) => { startInteract(); draggedIdRef.current = node.id; dragEdgeRef.current = undefined; clearDragTimer(); stopAutoPan(); }}
                 onNodeDrag={(e) => onNodeDrag(e)}
                 onNodeDragStop={onNodeDragStop}
                 onPaneClick={deselectAll}
@@ -519,7 +575,7 @@ export function Terminal() {
                 fitViewOptions={{ maxZoom: 1, padding: 0.12 }}
                 panOnDrag
                 zoomOnScroll
-                autoPanOnNodeDrag={autoPan}
+                autoPanOnNodeDrag={false}
                 selectionOnDrag={false}
                 deleteKeyCode={null}
               >
@@ -590,7 +646,7 @@ export function Terminal() {
         </div>
 
         {/* ── Bottom bar ── */}
-        <footer className="flex items-center gap-1 border-t border-border bg-bg2 px-2 py-1">
+        <footer className="flex items-center gap-1 overflow-x-auto border-t border-border bg-bg2 px-2 py-1">
           {spaceNames.map((name, i) => (
             <span key={i} className={`group flex items-center rounded ${i === active ? "bg-gold/15" : "hover:bg-bg3"}`}>
               {renaming?.i === i ? (
