@@ -29,6 +29,7 @@ export function LiveChart({ state }: { state: AlgoState }) {
   const [mode, setMode] = useState<ChartMode>("candles");
   const [loading, setLoading] = useState(false);
   const [empty, setEmpty] = useState(false);
+  const [chartReady, setChartReady] = useState(false);
 
   const active = selected && markets.includes(selected) ? selected : markets[0] ?? "";
   const snap = active ? state.indicators?.[active] : undefined;
@@ -70,13 +71,16 @@ export function LiveChart({ state }: { state: AlgoState }) {
       };
       window.addEventListener("apex-theme", onTheme);
       cleanupTheme = () => window.removeEventListener("apex-theme", onTheme);
+      setChartReady(true); // signal the data effect that the series exist now
     })();
-    return () => { disposed = true; ro?.disconnect(); cleanupTheme?.(); chartRef.current?.remove(); chartRef.current = candleRef.current = lineRef.current = null; };
+    return () => { disposed = true; setChartReady(false); ro?.disconnect(); cleanupTheme?.(); chartRef.current?.remove(); chartRef.current = candleRef.current = lineRef.current = null; };
   }, []);
 
   // Fetch candles whenever instrument or interval changes (and refresh every 60s).
+  // Gated on chartReady so data never arrives before the chart exists (was the bug
+  // that left the chart blank: fetch won the race against the async chart import).
   useEffect(() => {
-    if (!active) return;
+    if (!active || !chartReady) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout>;
 
@@ -112,7 +116,7 @@ export function LiveChart({ state }: { state: AlgoState }) {
     timer = setTimeout(tick, 60_000);
     return () => { alive = false; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, interval, mode]);
+  }, [active, interval, mode, chartReady]);
 
   function toggleFullscreen() {
     const el = wrapRef.current;
