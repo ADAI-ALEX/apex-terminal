@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AlgoState } from "@/lib/types";
 import { chartColors } from "@/lib/theme";
 
@@ -40,6 +40,11 @@ export function LiveChart({ state }: { state: AlgoState }) {
   const candleRef = useRef<any>(null);
   const lineRef = useRef<any>(null);
   const fittedFor = useRef("");
+  const dataRef = useRef<Candle[]>([]);
+  // Always read the freshest engine state for the candles fallback: the fetch effect
+  // closes over this ref (not the prop), so late-arriving KV candles are still used.
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   // Mount the chart with an explicit ResizeObserver (reliable fill on resize/zoom).
   useEffect(() => {
@@ -76,24 +81,44 @@ export function LiveChart({ state }: { state: AlgoState }) {
     return () => { disposed = true; setChartReady(false); ro?.disconnect(); cleanupTheme?.(); chartRef.current?.remove(); chartRef.current = candleRef.current = lineRef.current = null; };
   }, []);
 
+  // Paint the current dataset into the series. Safe to call any time — it no-ops until
+  // the (async-imported) chart exists, then the readiness effect calls it again. This
+  // decoupling is the real blank-chart fix: drawing never depends on the fetch winning
+  // a race against the chart mount (the previous chartReady *gate* could stay stuck).
+  const redraw = useCallback(() => {
+    const candle = candleRef.current, line = lineRef.current;
+    if (!candle || !line) return;
+    const rows = dataRef.current;
+    setEmpty(rows.length === 0);
+    if (mode === "candles") { candle.setData(rows); line.setData([]); }
+    else { candle.setData([]); line.setData(rows.map((c) => ({ time: c.time, value: c.close }))); }
+    const key = `${active}:${interval}:${mode}`;
+    if (rows.length && fittedFor.current !== key) {
+      fittedFor.current = key;
+      // Fit on the next frame so the price + time scales size to the freshly-set data.
+      requestAnimationFrame(() => chartRef.current?.timeScale().fitContent());
+    }
+  }, [active, interval, mode]);
+  const redrawRef = useRef(redraw);
+  redrawRef.current = redraw;
+
+  // Re-draw when the chart becomes ready (mount) or the draw config changes (mode).
+  useEffect(() => { redraw(); }, [redraw, chartReady]);
+
   // Fetch candles whenever instrument or interval changes (and refresh every 60s).
-  // Gated on chartReady so data never arrives before the chart exists (was the bug
-  // that left the chart blank: fetch won the race against the async chart import).
+  // Independent of chart readiness: results land in dataRef and redraw() paints them
+  // whenever the chart is up — so neither order (fetch-first or chart-first) goes blank.
   useEffect(() => {
-    if (!active || !chartReady) return;
+    if (!active) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout>;
 
-    const draw = (rows: Candle[]) => {
-      const candle = candleRef.current, line = lineRef.current;
-      if (!candle || !line) return;
+    const apply = (rows: Candle[]) => {
       const seen = new Set<number>();
-      const clean = [...rows].sort((a, b) => a.time - b.time).filter((c) => (seen.has(c.time) ? false : (seen.add(c.time), true)));
-      setEmpty(clean.length === 0);
-      if (mode === "candles") { candle.setData(clean); line.setData([]); }
-      else { candle.setData([]); line.setData(clean.map((c) => ({ time: c.time, value: c.close }))); }
-      const key = `${active}:${interval}:${mode}`;
-      if (clean.length && fittedFor.current !== key) { chartRef.current?.timeScale().fitContent(); fittedFor.current = key; }
+      dataRef.current = [...rows]
+        .sort((a, b) => a.time - b.time)
+        .filter((c) => (seen.has(c.time) ? false : (seen.add(c.time), true)));
+      if (alive) redrawRef.current();
     };
 
     const load = async (showSpinner: boolean) => {
@@ -102,10 +127,10 @@ export function LiveChart({ state }: { state: AlgoState }) {
         const res = await fetch(`/api/prices?symbol=${encodeURIComponent(active)}&interval=${interval}`, { cache: "no-store" });
         const j = await res.json();
         let rows: Candle[] = Array.isArray(j.candles) ? j.candles : [];
-        if (!rows.length) rows = (state.candles?.[active] ?? []) as Candle[]; // fallback: engine candles
-        if (alive) draw(rows);
+        if (!rows.length) rows = (stateRef.current.candles?.[active] ?? []) as Candle[]; // fallback: engine candles
+        apply(rows);
       } catch {
-        if (alive) draw((state.candles?.[active] ?? []) as Candle[]);
+        apply((stateRef.current.candles?.[active] ?? []) as Candle[]); // network down → engine candles
       } finally {
         if (alive && showSpinner) setLoading(false);
       }
@@ -115,8 +140,7 @@ export function LiveChart({ state }: { state: AlgoState }) {
     const tick = () => { void load(false); timer = setTimeout(tick, 60_000); };
     timer = setTimeout(tick, 60_000);
     return () => { alive = false; clearTimeout(timer); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, interval, mode, chartReady]);
+  }, [active, interval]);
 
   function toggleFullscreen() {
     const el = wrapRef.current;
