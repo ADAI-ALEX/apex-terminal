@@ -122,9 +122,10 @@ export function Terminal() {
     const def = WIDGETS_BY_ID[widgetId];
     if (!def) return;
     if (view !== "terminal") setView("terminal");
-    // Place it where the user is currently looking (centre of the viewport) so it's
-    // immediately visible — no need to hunt for it.
-    const w = def.w * 60, h = def.h * 24;
+    // Scale the node's canvas size by 1/zoom so it looks normal-sized on screen at any
+    // zoom level, and place it at the centre of the current viewport.
+    const z = rfRef.current?.getZoom?.() ?? 1;
+    const w = (def.w * 60) / z, h = (def.h * 24) / z;
     const rect = mainRef.current?.getBoundingClientRect();
     let pos = { x: 80, y: 80 };
     if (rect && rfRef.current?.screenToFlowPosition) {
@@ -151,7 +152,9 @@ export function Terminal() {
   const addWidgetAt = useCallback((widgetId: string, pos: { x: number; y: number }) => {
     const def = WIDGETS_BY_ID[widgetId];
     if (!def) return;
-    setNodes((nds) => [...nds, mk(widgetId, pos.x, pos.y, def.w * 60, def.h * 24)]);
+    const z = rfRef.current?.getZoom?.() ?? 1; // keep on-screen size consistent at any zoom
+    const w = (def.w * 60) / z, h = (def.h * 24) / z;
+    setNodes((nds) => [...nds, mk(widgetId, pos.x - w / 2, pos.y - h / 2, w, h)]);
   }, []);
 
   // ── Docking (Windows-style edge snap) ──────────────────────────────
@@ -187,7 +190,7 @@ export function Terminal() {
       if (z) {
         setSnapZone(z);
         setAutoPan(false);
-        zoneRef.current.timer = setTimeout(() => { setSnapZone(null); setAutoPan(true); }, 500);
+        zoneRef.current.timer = setTimeout(() => { setSnapZone(null); setAutoPan(true); }, 1000);
       } else {
         setSnapZone(null);
         setAutoPan(true);
@@ -494,8 +497,8 @@ export function Terminal() {
             {/* Snap preview while dragging a widget toward an edge (outline, not a fill) */}
             {view === "terminal" && snapZone && (
               <div
-                className="pointer-events-none absolute top-1.5 bottom-1.5 z-40 rounded-lg border-2 border-dashed border-gold"
-                style={{ [snapZone]: 6, width: `calc(${snapZone === "left" ? dock.leftW : dock.rightW}% - 12px)`, background: "rgba(201,168,76,0.06)" } as React.CSSProperties}
+                className="pointer-events-none absolute top-1.5 bottom-1.5 z-40 rounded-lg border-2 border-dashed border-gold/80"
+                style={{ [snapZone]: 6, width: `calc(${snapZone === "left" ? dock.leftW : dock.rightW}% - 12px)` } as React.CSSProperties}
               />
             )}
 

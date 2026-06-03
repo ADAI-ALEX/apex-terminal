@@ -119,9 +119,18 @@ body {
   width: 8px;
   height: 8px;
 }
+::-webkit-scrollbar-track {
+  background: transparent;
+}
 ::-webkit-scrollbar-thumb {
-  background: #2a2a2a;
+  background: rgb(var(--c-border));
   border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--c-textdim));
+}
+* {
+  scrollbar-color: rgb(var(--c-border)) transparent; /* Firefox */
 }
 
 /* ── react-grid-layout (themed, no package CSS import needed) ── */
