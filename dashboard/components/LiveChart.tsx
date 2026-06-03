@@ -45,6 +45,9 @@ export function LiveChart({ state }: { state: AlgoState }) {
   // closes over this ref (not the prop), so late-arriving KV candles are still used.
   const stateRef = useRef(state);
   stateRef.current = state;
+  // Remembers whether the whole terminal was already fullscreen when the chart was
+  // expanded, so leaving chart-fullscreen returns there (not all the way to normal).
+  const fsOriginRef = useRef<"normal" | "term">("normal");
 
   // Mount the chart with an explicit ResizeObserver (reliable fill on resize/zoom).
   useEffect(() => {
@@ -142,11 +145,24 @@ export function LiveChart({ state }: { state: AlgoState }) {
     return () => { alive = false; clearTimeout(timer); };
   }, [active, interval]);
 
+  // Expand JUST the chart to the whole screen. If the terminal was already fullscreen,
+  // leaving chart-fullscreen (via this button) returns to the fullscreen terminal; if it
+  // wasn't, it returns to the normal window. (Uses the Fullscreen API, which ignores the
+  // React Flow canvas transform, so the chart truly fills the monitor.)
   function toggleFullscreen() {
     const el = wrapRef.current;
     if (!el) return;
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void el.requestFullscreen?.();
+    const root = el.closest("[data-apex-root]") as HTMLElement | null;
+    if (document.fullscreenElement === el) {
+      const restoreTerm = fsOriginRef.current === "term" && !!root;
+      fsOriginRef.current = "normal";
+      void document.exitFullscreen()
+        .then(() => { if (restoreTerm) root!.requestFullscreen?.().catch(() => {}); })
+        .catch(() => {});
+    } else {
+      fsOriginRef.current = document.fullscreenElement ? "term" : "normal";
+      void el.requestFullscreen?.().catch(() => {});
+    }
   }
 
   return (
