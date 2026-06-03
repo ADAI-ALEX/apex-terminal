@@ -16,10 +16,17 @@ import { ThemeToggle } from "./ThemeToggle";
 
 const STORE_KEY = "apex.terminal.v3";
 type WNode = Node<{ widgetId: string }>;
-type DockState = { left?: string; right?: string; leftW: number; rightW: number };
+type Side = "left" | "right" | "top" | "bottom";
+// Docked widget per side + each side's size (% of width for L/R, % of height for T/B).
+type DockState = {
+  left?: string; right?: string; top?: string; bottom?: string;
+  leftW: number; rightW: number; topH: number; bottomH: number;
+};
 type Space = { name: string; nodes: WNode[]; dock?: DockState };
 type Persisted = { active: number; spaces: Space[] };
-const DEFAULT_DOCK: DockState = { leftW: 42, rightW: 42 };
+const DEFAULT_DOCK: DockState = { leftW: 30, rightW: 30, topH: 32, bottomH: 32 };
+// Older persisted spaces may lack top/bottom keys — backfill so `${dock.topH}%` is valid.
+const mergeDock = (d?: Partial<DockState>): DockState => ({ ...DEFAULT_DOCK, ...(d || {}) });
 
 const nodeTypes = { widget: WidgetNode };
 
@@ -60,7 +67,11 @@ export function Terminal() {
   const [active, setActive] = useState(0);
   const [spaceNames, setSpaceNames] = useState<string[]>(["MAIN"]);
   const [dock, setDock] = useState<DockState>(DEFAULT_DOCK);
-  const [snapZone, setSnapZone] = useState<"left" | "right" | null>(null);
+  const [snapZone, setSnapZone] = useState<Side | null>(null);
+  // Auto-pan starts OFF and is switched on only after a 1s edge-hold. React Flow only
+  // *starts* its auto-pan loop while this is true, so defaulting it off is what keeps
+  // the map still for the first second (then we flip it on for the "auto move").
+  const [autoPan, setAutoPan] = useState(false);
 
   const store = useRef<Persisted | null>(null);
   const activeRef = useRef(0);
@@ -70,9 +81,9 @@ export function Terminal() {
   const mainRef = useRef<HTMLElement>(null);
   const nodesRef = useRef<WNode[]>([]);
   nodesRef.current = nodes;
-  const dockedNodeRef = useRef<{ left?: WNode; right?: WNode }>({});
-  const zoneRef = useRef<{ candidate: "left" | "right" | null; timer: ReturnType<typeof setTimeout> | null }>({ candidate: null, timer: null });
-  const [autoPan, setAutoPan] = useState(true);
+  const dockedNodeRef = useRef<{ left?: WNode; right?: WNode; top?: WNode; bottom?: WNode }>({});
+  const dragTimer = useRef<ReturnType<typeof setTimeout> | null>(null);   // 1s edge-hold → auto-pan
+  const dragEdgeRef = useRef<Side | null | undefined>(undefined);          // current edge under cursor
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [maximizedId, setMaximizedId] = useState<string | null>(null);
   const [interacting, setInteracting] = useState(false);
@@ -99,7 +110,7 @@ export function Terminal() {
     setActive(p.active);
     setSpaceNames(p.spaces.map((s) => s.name));
     setNodes(p.spaces[p.active].nodes);
-    setDock(p.spaces[p.active].dock ?? DEFAULT_DOCK);
+    setDock(mergeDock(p.spaces[p.active].dock));
     loaded.current = true;
   }, []);
 
@@ -122,17 +133,21 @@ export function Terminal() {
     const def = WIDGETS_BY_ID[widgetId];
     if (!def) return;
     if (view !== "terminal") setView("terminal");
-    // Scale the node's canvas size by 1/zoom so it looks normal-sized on screen at any
-    // zoom level, and place it at the centre of the current viewport.
+    // Add the widget at its natural footprint and then frame it: pan to the new window
+    // and lift the zoom into a readable band (0.8–1.1). This is what fixes "too small
+    // when I put it in" — opening a widget while zoomed right out now scales it sensibly
+    // instead of dropping a tiny box into a far-zoomed canvas.
+    const w = def.w * 60, h = def.h * 24;
     const z = rfRef.current?.getZoom?.() ?? 1;
-    const w = (def.w * 60) / z, h = (def.h * 24) / z;
+    const targetZoom = Math.min(1.1, Math.max(0.8, z));
     const rect = mainRef.current?.getBoundingClientRect();
-    let pos = { x: 80, y: 80 };
+    let center: { x: number; y: number } | null = null;
     if (rect && rfRef.current?.screenToFlowPosition) {
-      pos = rfRef.current.screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height * 0.32 });
-      pos = { x: pos.x - w / 2, y: pos.y - h / 2 };
+      center = rfRef.current.screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
     }
+    const pos = center ? { x: center.x - w / 2, y: center.y - h / 2 } : { x: 80, y: 80 };
     setNodes((nds) => [...nds, mk(widgetId, pos.x, pos.y, w, h)]);
+    if (center) rfRef.current?.setCenter?.(center.x, center.y, { zoom: targetZoom, duration: 350 });
   }, [view]);
 
   const removeWidget = useCallback((id: string) => {
@@ -157,8 +172,20 @@ export function Terminal() {
     setNodes((nds) => [...nds, mk(widgetId, pos.x - w / 2, pos.y - h / 2, w, h)]);
   }, []);
 
-  // ── Docking (Windows-style edge snap) ──────────────────────────────
-  const dockNode = useCallback((id: string, side: "left" | "right") => {
+  // ── Docking (edge snap, all four sides) ─────────────────────────────
+  // Geometry for a docked panel / its snap preview. Left & right run the FULL height
+  // and sit at the walls; top & bottom sit BETWEEN whatever side panels exist (and only
+  // reach the walls when no side panel is docked) — the layout from the user's sketch.
+  const dockGeom = useCallback((side: Side): React.CSSProperties => {
+    const lx = dock.left ? `${dock.leftW}%` : "0";
+    const rx = dock.right ? `${dock.rightW}%` : "0";
+    if (side === "left") return { left: 0, top: 0, bottom: 0, width: `${dock.leftW}%` };
+    if (side === "right") return { right: 0, top: 0, bottom: 0, width: `${dock.rightW}%` };
+    if (side === "top") return { top: 0, left: lx, right: rx, height: `${dock.topH}%` };
+    return { bottom: 0, left: lx, right: rx, height: `${dock.bottomH}%` };
+  }, [dock]);
+
+  const dockNode = useCallback((id: string, side: Side) => {
     const n = nodesRef.current.find((x) => x.id === id);
     if (!n) return;
     dockedNodeRef.current[side] = n; // remember exact node so close() restores it
@@ -168,75 +195,87 @@ export function Terminal() {
 
   // Undock: close() restores the widget to its ORIGINAL spot; a drag passes `at` to
   // drop it where released.
-  const undock = useCallback((side: "left" | "right", at?: { x: number; y: number }) => {
+  const undock = useCallback((side: Side, at?: { x: number; y: number }) => {
     const orig = dockedNodeRef.current[side];
     dockedNodeRef.current[side] = undefined;
     setDock((d) => ({ ...d, [side]: undefined }));
     if (orig) setNodes((nds) => [...nds, at ? { ...orig, position: at } : orig]);
   }, []);
 
-  // While dragging a node: show the snap outline IMMEDIATELY at the edge, and suppress
-  // the canvas auto-pan for 0.5s so the user can drop to dock. After 0.5s the outline
-  // clears and the camera is allowed to follow the drag.
+  const clearDragTimer = () => { if (dragTimer.current) { clearTimeout(dragTimer.current); dragTimer.current = null; } };
+
+  // While dragging a node toward an edge: show the dock outline and hold the map still.
+  // If still held at the same edge after 1s, drop the outline and let the canvas auto-pan
+  // ("auto workspace move"). Releasing while the outline is up docks to that side.
   const onNodeDrag = useCallback((e: React.MouseEvent) => {
     const rect = mainRef.current?.getBoundingClientRect();
     if (!rect) return;
     const EDGE = 56;
-    const x = (e as any).clientX ?? 0;
-    const z: "left" | "right" | null = x <= rect.left + EDGE ? "left" : x >= rect.right - EDGE ? "right" : null;
-    if (z !== zoneRef.current.candidate) {
-      zoneRef.current.candidate = z;
-      if (zoneRef.current.timer) { clearTimeout(zoneRef.current.timer); zoneRef.current.timer = null; }
-      if (z) {
-        setSnapZone(z);
-        setAutoPan(false);
-        zoneRef.current.timer = setTimeout(() => { setSnapZone(null); setAutoPan(true); }, 1000);
-      } else {
-        setSnapZone(null);
-        setAutoPan(true);
-      }
-    }
+    const x = (e as { clientX?: number }).clientX ?? 0;
+    const y = (e as { clientY?: number }).clientY ?? 0;
+    const z: Side | null =
+      x <= rect.left + EDGE ? "left"
+      : x >= rect.right - EDGE ? "right"
+      : y <= rect.top + EDGE ? "top"
+      : y >= rect.bottom - EDGE ? "bottom"
+      : null;
+    if (z === dragEdgeRef.current) return; // unchanged → keep current outline/timer
+    dragEdgeRef.current = z;
+    clearDragTimer();
+    setAutoPan(false);        // hold the map still while the dock outline is offered
+    setSnapZone(z);
+    if (z) dragTimer.current = setTimeout(() => { setSnapZone(null); setAutoPan(true); }, 1000);
   }, []);
 
   const onNodeDragStop = useCallback((_e: React.MouseEvent, node: Node) => {
     clearHide(); setInteracting(false);
-    if (zoneRef.current.timer) { clearTimeout(zoneRef.current.timer); zoneRef.current.timer = null; }
+    clearDragTimer();
+    dragEdgeRef.current = undefined;
+    setAutoPan(false);
     setSnapZone((z) => { if (z) dockNode(node.id, z); return null; });
-    setAutoPan(true);
-    zoneRef.current.candidate = null;
   }, [dockNode]);
 
-  const startDockResize = (side: "left" | "right") => (e: React.MouseEvent) => {
-    e.preventDefault();
+  // Resize a docked panel by dragging its inner edge — horizontal for L/R, vertical for T/B.
+  const startDockResize = (side: Side) => (e: React.MouseEvent) => {
+    e.preventDefault(); e.stopPropagation();
     const rect = mainRef.current?.getBoundingClientRect();
     if (!rect) return;
+    const key = ({ left: "leftW", right: "rightW", top: "topH", bottom: "bottomH" } as const)[side];
     const onMove = (ev: MouseEvent) => {
-      const pct = side === "left"
-        ? ((ev.clientX - rect.left) / rect.width) * 100
-        : ((rect.right - ev.clientX) / rect.width) * 100;
-      setDock((d) => ({ ...d, [side === "left" ? "leftW" : "rightW"]: Math.min(82, Math.max(18, pct)) }));
+      const pct =
+        side === "left" ? ((ev.clientX - rect.left) / rect.width) * 100
+        : side === "right" ? ((rect.right - ev.clientX) / rect.width) * 100
+        : side === "top" ? ((ev.clientY - rect.top) / rect.height) * 100
+        : ((rect.bottom - ev.clientY) / rect.height) * 100;
+      setDock((d) => ({ ...d, [key]: Math.min(82, Math.max(12, pct)) }));
     };
     const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   };
 
-  const dockPanel = (side: "left" | "right") => {
+  const dockPanel = (side: Side) => {
     const widgetId = dock[side];
     if (!widgetId) return null;
     const def = WIDGETS_BY_ID[widgetId];
     if (!def) return null;
-    const w = side === "left" ? dock.leftW : dock.rightW;
+    const handleCls =
+      side === "left" ? "top-0 bottom-0 right-0 w-1.5 cursor-col-resize"
+      : side === "right" ? "top-0 bottom-0 left-0 w-1.5 cursor-col-resize"
+      : side === "top" ? "left-0 right-0 bottom-0 h-1.5 cursor-row-resize"
+      : "left-0 right-0 top-0 h-1.5 cursor-row-resize";
     return (
       <div
-        className={`absolute top-0 bottom-0 z-20 p-1.5 ${side === "left" ? "left-0" : "right-0"}`}
-        style={{ width: `${w}%` }}
+        key={side}
+        className="absolute z-20"
+        style={dockGeom(side)}
         // Drag the docked window out: drop in the canvas to float, or near an edge to re-dock.
         draggable
         onDragStart={(e) => { e.dataTransfer.setData("application/apex-dock", side); e.dataTransfer.effectAllowed = "move"; }}
         onDragEnd={() => setSnapZone(null)}
       >
-        <div className="apex-window h-full w-full">
+        {/* Flush to the edge — no padding, square corners — so no workspace shows through. */}
+        <div className="apex-window h-full w-full overflow-hidden" style={{ borderRadius: 0 }}>
           <WidgetFrame code={def.code} title={`${def.name} · docked`} onClose={() => undock(side)}>
             {state ? def.render(state) : <div className="flex h-full items-center justify-center font-mono text-[11px] text-textdim">waiting for engine…</div>}
           </WidgetFrame>
@@ -244,7 +283,7 @@ export function Terminal() {
         <div
           onMouseDown={startDockResize(side)}
           title="Drag to resize"
-          className={`absolute top-0 bottom-0 w-1.5 cursor-col-resize bg-transparent transition hover:bg-gold/50 ${side === "left" ? "right-0" : "left-0"}`}
+          className={`absolute ${handleCls} bg-transparent transition hover:bg-gold/50`}
         />
       </div>
     );
@@ -273,16 +312,19 @@ export function Terminal() {
       : { x: 80, y: 80 };
 
     // Re-positioning a docked window: near an edge → re-dock there, else float at drop.
-    const fromSide = e.dataTransfer.getData("application/apex-dock") as "left" | "right" | "";
-    if (fromSide === "left" || fromSide === "right") {
-      let toSide: "left" | "right" | null = null;
-      if (rect) { const rel = (e.clientX - rect.left) / rect.width; toSide = rel <= 0.18 ? "left" : rel >= 0.82 ? "right" : null; }
-      if (toSide) {
+    const fromSide = e.dataTransfer.getData("application/apex-dock") as Side | "";
+    if (fromSide === "left" || fromSide === "right" || fromSide === "top" || fromSide === "bottom") {
+      let toSide: Side | null = null;
+      if (rect) {
+        const rx = (e.clientX - rect.left) / rect.width, ry = (e.clientY - rect.top) / rect.height;
+        toSide = rx <= 0.15 ? "left" : rx >= 0.85 ? "right" : ry <= 0.15 ? "top" : ry >= 0.85 ? "bottom" : null;
+      }
+      if (toSide && toSide !== fromSide) {
         const orig = dockedNodeRef.current[fromSide];
         dockedNodeRef.current[fromSide] = undefined;
         dockedNodeRef.current[toSide] = orig;
         setDock((d) => ({ ...d, [fromSide]: undefined, [toSide!]: orig?.data.widgetId ?? d[fromSide] }));
-      } else {
+      } else if (!toSide) {
         undock(fromSide, flowPos);
       }
       return;
@@ -322,7 +364,7 @@ export function Terminal() {
     activeRef.current = i;
     setActive(i);
     setNodes(store.current.spaces[i].nodes);
-    setDock(store.current.spaces[i].dock ?? DEFAULT_DOCK);
+    setDock(mergeDock(store.current.spaces[i].dock));
   };
   const addSpace = () => {
     if (!store.current) return;
@@ -340,7 +382,7 @@ export function Terminal() {
     activeRef.current = ni; setActive(ni);
     setSpaceNames(store.current.spaces.map((s) => s.name));
     setNodes(store.current.spaces[ni].nodes);
-    setDock(store.current.spaces[ni].dock ?? DEFAULT_DOCK);
+    setDock(mergeDock(store.current.spaces[ni].dock));
     saveStore();
   };
   const clearSpace = () => { if (confirm("Clear all widgets in this workspace?")) { setNodes([]); setDock({ ...DEFAULT_DOCK }); } };
@@ -446,7 +488,10 @@ export function Terminal() {
               if (types.includes("application/apex-dock")) {
                 e.preventDefault(); e.dataTransfer.dropEffect = "move";
                 const rect = mainRef.current?.getBoundingClientRect();
-                if (rect) { const rel = (e.clientX - rect.left) / rect.width; setSnapZone(rel <= 0.18 ? "left" : rel >= 0.82 ? "right" : null); }
+                if (rect) {
+                  const rx = (e.clientX - rect.left) / rect.width, ry = (e.clientY - rect.top) / rect.height;
+                  setSnapZone(rx <= 0.15 ? "left" : rx >= 0.85 ? "right" : ry <= 0.15 ? "top" : ry >= 0.85 ? "bottom" : null);
+                }
               } else if (types.includes("application/apex-widget")) {
                 e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setDragOver(true);
               }
@@ -462,7 +507,7 @@ export function Terminal() {
                 onInit={(inst) => { rfRef.current = inst; }}
                 onMoveStart={startInteract}
                 onMoveEnd={(e) => endInteract(e)}
-                onNodeDragStart={startInteract}
+                onNodeDragStart={() => { startInteract(); dragEdgeRef.current = undefined; setAutoPan(false); clearDragTimer(); }}
                 onNodeDrag={(e) => onNodeDrag(e)}
                 onNodeDragStop={onNodeDragStop}
                 onPaneClick={deselectAll}
@@ -471,6 +516,7 @@ export function Terminal() {
                 minZoom={0.25}
                 maxZoom={2}
                 fitView
+                fitViewOptions={{ maxZoom: 1, padding: 0.12 }}
                 panOnDrag
                 zoomOnScroll
                 autoPanOnNodeDrag={autoPan}
@@ -490,15 +536,19 @@ export function Terminal() {
               </div>
             )}
 
-            {/* Docked panels (fixed to the edges, stay put while the canvas pans) */}
+            {/* Docked panels (fixed to the edges, stay put while the canvas pans).
+                Left/right run full height; top/bottom sit between them. */}
             {view === "terminal" && dockPanel("left")}
             {view === "terminal" && dockPanel("right")}
+            {view === "terminal" && dockPanel("top")}
+            {view === "terminal" && dockPanel("bottom")}
 
-            {/* Snap preview while dragging a widget toward an edge (outline, not a fill) */}
+            {/* Snap preview while dragging toward an edge — outline matches the exact
+                flush area the docked panel will occupy. */}
             {view === "terminal" && snapZone && (
               <div
-                className="pointer-events-none absolute top-1.5 bottom-1.5 z-40 rounded-lg border-2 border-dashed border-gold/80"
-                style={{ [snapZone]: 6, width: `calc(${snapZone === "left" ? dock.leftW : dock.rightW}% - 12px)` } as React.CSSProperties}
+                className="pointer-events-none absolute z-40 border-2 border-dashed border-gold/80"
+                style={dockGeom(snapZone)}
               />
             )}
 
@@ -513,8 +563,18 @@ export function Terminal() {
               const def = inst && WIDGETS_BY_ID[inst.data.widgetId];
               if (!def) return null;
               return (
-                <div className="absolute inset-0 z-30 bg-bg p-2">
-                  <div className="apex-window h-full w-full">
+                // Fill only the space NOT taken by docked panels (all four sides), flush
+                // to them, so docked windows stay visible alongside the maximized one.
+                <div
+                  className="absolute z-30 bg-bg"
+                  style={{
+                    left: dock.left ? `${dock.leftW}%` : 0,
+                    right: dock.right ? `${dock.rightW}%` : 0,
+                    top: dock.top ? `${dock.topH}%` : 0,
+                    bottom: dock.bottom ? `${dock.bottomH}%` : 0,
+                  }}
+                >
+                  <div className="apex-window h-full w-full overflow-hidden" style={{ borderRadius: 0 }}>
                     <WidgetFrame
                       code={def.code} title={def.name} maximized
                       onMaximize={() => setMaximizedId(null)}

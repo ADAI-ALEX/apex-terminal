@@ -23,6 +23,7 @@ STATE_KEY = "apex:state"              # live snapshot pushed by the laptop
 STATUS_KEY = "apex:onboarding_status" # algo-confirmed onboarding status
 BACKTEST_REQ_KEY = "apex:backtest_request"   # dashboard → laptop: run this backtest
 BACKTEST_RES_KEY = "apex:backtest_result"    # laptop → dashboard: backtest result
+CHART_KEY = "apex:chart"             # laptop → dashboard: multi-interval chart candles
 
 _TIMEOUT = 8
 

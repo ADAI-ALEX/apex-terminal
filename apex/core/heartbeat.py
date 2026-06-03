@@ -95,6 +95,7 @@ class Heartbeat:
             self._loop(self._health, self.s.heartbeat.health_seconds, "Health"),
             self._loop(self._config_watch, 8, "ConfigWatch"),
             self._loop(self._backtest_watch, 2, "Backtest"),
+            self._loop(self._publish_chart, self.s.heartbeat.tier2_signal_seconds, "ChartPublish"),
         )
 
     def stop(self) -> None:
@@ -392,6 +393,39 @@ class Heartbeat:
             await asyncio.to_thread(kv.kv_set, kv.STATE_KEY, STATE.snapshot())
         except Exception as exc:  # never let telemetry break the loop
             logger.debug("KV state publish skipped: {}", exc)
+
+    async def _publish_chart(self) -> None:
+        """Publish multi-interval Yahoo candles for the dashboard chart to KV.
+
+        The dashboard's ``/api/prices`` reads these first: the laptop reaches Yahoo
+        fine (same source the backtest uses), whereas Vercel's serverless IP is
+        routinely rate-limited/blocked by Yahoo — which is why the chart was blank.
+        Best-effort and never raises, so a data hiccup can't disturb trading.
+        """
+        if not kv.kv_enabled():
+            return
+        from apex.backtest import yahoo
+
+        intervals = (("5m", 5), ("15m", 15), ("1h", 60), ("1d", 1440))
+        bars = 250
+        payload: dict[str, dict[str, list[dict]]] = {}
+        for market in self.markets:
+            per: dict[str, list[dict]] = {}
+            for label, minutes in intervals:
+                try:
+                    candles = await asyncio.to_thread(yahoo.fetch, market.key, minutes, bars)
+                    if candles:
+                        per[label] = self._candle_view(candles, limit=bars)
+                except Exception as exc:
+                    logger.debug("Chart publish {} {} failed: {}", market.key, label, exc)
+            if per:
+                payload[market.key] = per
+        if payload:
+            try:
+                await asyncio.to_thread(kv.kv_set, kv.CHART_KEY, payload)
+                logger.debug("Published chart candles for {} instrument(s).", len(payload))
+            except Exception as exc:
+                logger.debug("KV chart publish skipped: {}", exc)
 
     # ──────────────────────────────────────────────────────────────────
     #  Shared helpers
