@@ -87,6 +87,7 @@ export function Terminal() {
   const [interacting, setInteracting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [renaming, setRenaming] = useState<{ i: number; value: string } | null>(null);
+  const [confirmDlg, setConfirmDlg] = useState<null | { title: string; message: string; confirmLabel: string; onConfirm: () => void }>(null);
   const [light, setLight] = useState(false);
   const [isPhone, setIsPhone] = useState(false);   // small touch device (short side ≤ 500px)
   const [isSmall, setIsSmall] = useState(false);    // narrow viewport → overlay sidebar
@@ -434,14 +435,26 @@ export function Terminal() {
     setDock(mergeDock(store.current.spaces[ni].dock));
     saveStore();
   };
-  const clearSpace = () => { if (confirm("Clear all widgets in this workspace?")) { setNodes([]); setDock({ ...DEFAULT_DOCK }); } };
-  const resetAll = () => {
-    if (!confirm("Reset all workspaces to default?")) return;
+  const doClear = () => { setNodes([]); setDock({ ...DEFAULT_DOCK }); };
+  const doReset = () => {
     const p = defaultSpaces();
     store.current = p; activeRef.current = 0; setActive(0);
     setSpaceNames(p.spaces.map((s) => s.name)); setNodes(p.spaces[0].nodes); setDock({ ...DEFAULT_DOCK });
     try { localStorage.setItem(STORE_KEY, JSON.stringify(p)); } catch { /* ignore */ }
   };
+  // In-app confirmation (matches the Sign-out dialog) instead of the browser confirm().
+  const clearSpace = () => setConfirmDlg({
+    title: "Clear workspace?",
+    message: "This removes every widget and docked panel in the current workspace.",
+    confirmLabel: "Clear",
+    onConfirm: doClear,
+  });
+  const resetAll = () => setConfirmDlg({
+    title: "Reset all workspaces?",
+    message: "This restores every workspace to the default layout. Your custom layouts will be lost.",
+    confirmLabel: "Reset",
+    onConfirm: doReset,
+  });
 
   const catalog = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -451,7 +464,15 @@ export function Terminal() {
 
   return (
     <TerminalContext.Provider value={{ state, removeWidget, toggleMaximize, deselectAll, maximizedId }}>
-      <div ref={rootRef} data-apex-root className="relative flex h-screen w-screen flex-col overflow-hidden bg-bg text-textmid">
+      <div
+        ref={rootRef}
+        data-apex-root
+        // 100dvh (dynamic viewport height) so the terminal fits the *visible* area on
+        // mobile — 100vh includes the address-bar space and caused the page to scroll.
+        // h-screen stays as a fallback for browsers without dvh.
+        style={{ height: "100dvh" }}
+        className="relative flex h-screen w-screen flex-col overflow-hidden bg-bg text-textmid"
+      >
         {/* Phones must be landscape — the terminal is too dense for portrait. */}
         {isPhone && portrait && (
           <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center gap-4 bg-bg p-8 text-center">
@@ -688,6 +709,39 @@ export function Terminal() {
             <span className="text-textdim/60">v1.2</span>
           </span>
         </footer>
+
+        {/* In-app confirm dialog for Clear / Reset (styled like the Sign-out modal). */}
+        {confirmDlg && (
+          <div
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4"
+            onClick={() => setConfirmDlg(null)}
+          >
+            <div
+              className="w-full max-w-sm rounded-md border border-border bg-bg2 p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.3em] text-gold">Apex Algo</div>
+              <h2 className="mb-2 text-lg font-bold">{confirmDlg.title}</h2>
+              <p className="mb-6 text-sm text-textmid">{confirmDlg.message}</p>
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDlg(null)}
+                  className="rounded border border-border px-4 py-2 font-mono text-[11px] uppercase tracking-wider text-textmid transition hover:border-gold hover:text-gold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { confirmDlg.onConfirm(); setConfirmDlg(null); }}
+                  className="rounded bg-gold px-4 py-2 text-sm font-bold text-black transition hover:bg-gold2"
+                >
+                  {confirmDlg.confirmLabel}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </TerminalContext.Provider>
   );

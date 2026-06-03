@@ -407,7 +407,7 @@ class Heartbeat:
         from apex.backtest import yahoo
 
         intervals = (("5m", 5), ("15m", 15), ("1h", 60), ("1d", 1440))
-        bars = 600  # deep enough that the dashboard can scroll/zoom back through history
+        bars = 1000  # deep history so the dashboard can lazily scroll/zoom back a long way
         published = 0
         for market in self.markets:
             for label, minutes in intervals:
