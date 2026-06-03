@@ -32,11 +32,17 @@ export async function GET(request: Request) {
   const reqInterval = url.searchParams.get("interval") || "15m"; // as the chart sends it (5m/15m/1h/1d)
 
   // 1) Engine-published chart candles (reliable on Vercel — fetched from the laptop).
+  //    Per-instrument/interval key first (deep history); fall back to the older single
+  //    blob so the chart keeps working between a deploy and the next engine restart.
   if (kvEnabled()) {
-    const chart = await kvGet<Record<string, Record<string, Candle[]>>>(CHART_KEY);
-    const rows = chart?.[key]?.[reqInterval];
+    const rows = await kvGet<Candle[]>(`${CHART_KEY}:${key}:${reqInterval}`);
     if (rows && rows.length) {
       return Response.json({ symbol: key, interval: reqInterval, candles: rows, source: "engine" });
+    }
+    const blob = await kvGet<Record<string, Record<string, Candle[]>>>(CHART_KEY);
+    const legacy = blob?.[key]?.[reqInterval];
+    if (legacy && legacy.length) {
+      return Response.json({ symbol: key, interval: reqInterval, candles: legacy, source: "engine-blob" });
     }
   }
 

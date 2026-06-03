@@ -216,7 +216,10 @@ export function Terminal() {
   const undock = useCallback((side: Side, at?: { x: number; y: number }) => {
     const orig = dockedNodeRef.current[side];
     dockedNodeRef.current[side] = undefined;
-    setDock((d) => ({ ...d, [side]: undefined }));
+    const sizeKey = ({ left: "leftW", right: "rightW", top: "topH", bottom: "bottomH" } as const)[side];
+    // Reset this side's size so the NEXT tab docked here starts at the default size,
+    // not whatever the previous (now-removed) tab had been resized to.
+    setDock((d) => ({ ...d, [side]: undefined, [sizeKey]: DEFAULT_DOCK[sizeKey] }));
     if (orig) setNodes((nds) => [...nds, at ? { ...orig, position: at } : orig]);
   }, []);
 
@@ -368,7 +371,8 @@ export function Terminal() {
         const orig = dockedNodeRef.current[fromSide];
         dockedNodeRef.current[fromSide] = undefined;
         dockedNodeRef.current[toSide] = orig;
-        setDock((d) => ({ ...d, [fromSide]: undefined, [toSide!]: orig?.data.widgetId ?? d[fromSide] }));
+        const fromKey = ({ left: "leftW", right: "rightW", top: "topH", bottom: "bottomH" } as const)[fromSide];
+        setDock((d) => ({ ...d, [fromSide]: undefined, [fromKey]: DEFAULT_DOCK[fromKey], [toSide!]: orig?.data.widgetId ?? d[fromSide] }));
       } else if (!toSide) {
         undock(fromSide, flowPos);
       }
@@ -456,8 +460,8 @@ export function Terminal() {
             <p className="max-w-xs text-sm text-textdim">Apex Terminal runs in landscape. Turn your phone sideways to continue.</p>
           </div>
         )}
-        {/* ── Top bar ── */}
-        <header className="flex flex-wrap items-center gap-2 border-b border-border bg-bg2 px-3 py-1.5 sm:gap-3">
+        {/* ── Top bar (compact on mobile — search hides, tighter padding) ── */}
+        <header className="flex items-center gap-2 border-b border-border bg-bg2 px-2 py-1 sm:gap-3 sm:px-3 sm:py-1.5">
           <span className="font-mono text-sm font-bold tracking-[0.25em] text-gold">APEX</span>
           <div className="flex overflow-hidden rounded border border-border font-mono text-[10px]">
             <button onClick={() => setView("terminal")} className={`px-3 py-1 uppercase tracking-wider ${view === "terminal" ? "bg-gold/15 text-gold" : "text-textdim hover:text-textmid"}`}>Terminal</button>
@@ -468,12 +472,14 @@ export function Terminal() {
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { const m = WIDGETS.find((w) => `${w.name} ${w.code}`.toLowerCase().includes(query.trim().toLowerCase())); if (m) { addWidget(m.id); setQuery(""); } } }}
             placeholder="COMMAND OR SEARCH WIDGETS · ENTER"
-            className="order-last w-full min-w-0 rounded border border-border bg-bg3 px-3 py-1 font-mono text-[11px] uppercase tracking-wider text-textmid outline-none placeholder:text-textdim focus:border-gold sm:order-none sm:w-auto sm:flex-1"
+            className="hidden min-w-0 flex-1 rounded border border-border bg-bg3 px-3 py-1 font-mono text-[11px] uppercase tracking-wider text-textmid outline-none placeholder:text-textdim focus:border-gold sm:block"
           />
           <StatusDot status={status} mode={state?.mode} />
           <Clock />
           <ThemeToggle />
-          <button onClick={toggleFullscreen} title="Fullscreen terminal" className="rounded border border-border px-2 py-1 font-mono text-[12px] text-textmid transition hover:border-gold hover:text-gold">⛶</button>
+          {!isPhone && (
+            <button onClick={toggleFullscreen} title="Fullscreen terminal" className="rounded border border-border px-2 py-1 font-mono text-[12px] text-textmid transition hover:border-gold hover:text-gold">⛶</button>
+          )}
         </header>
 
         {/* ── Body ── */}
@@ -583,7 +589,11 @@ export function Terminal() {
                 <Background id="dots" variant={BackgroundVariant.Dots} gap={22} size={1} color={grid.dots} />
                 <Controls showInteractive={false} />
                 {interacting && (
-                  <MiniMap pannable zoomable nodeColor="#c9a84c66" nodeStrokeColor="#c9a84c" maskColor={light ? "rgba(0,0,0,0.15)" : "rgba(0,0,0,0.6)"} />
+                  <MiniMap
+                    pannable zoomable nodeColor="#c9a84c66" nodeStrokeColor="#c9a84c"
+                    maskColor={light ? "rgba(0,0,0,0.15)" : "rgba(0,0,0,0.6)"}
+                    style={isSmall ? { width: 96, height: 64 } : undefined}
+                  />
                 )}
               </ReactFlow>
             ) : (
