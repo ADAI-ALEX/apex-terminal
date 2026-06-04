@@ -128,6 +128,7 @@ def run_backtest(
         trade_log.append({
             "market": market.key, "direction": ot.direction.value,
             "entry": round(ot.entry, 4), "exit": round(exit_price, 4),
+            "stop": round(ot.stop, 4),
             "pnl": round(pnl, 2), "ret_pct": round(ret, 3),
             "opened": ot.opened, "closed": closed_iso,
             "reason": reason, "strategy": ot.strategy,

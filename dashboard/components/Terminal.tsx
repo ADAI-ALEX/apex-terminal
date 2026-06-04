@@ -511,42 +511,57 @@ export function Terminal() {
               {isSmall && <div className="absolute inset-0 z-30 bg-black/50" onClick={() => setSidebarOpen(false)} />}
             <aside className={`flex w-56 flex-col border-r border-border bg-bg2 ${isSmall ? "absolute left-0 top-0 bottom-0 z-40" : "shrink-0"}`}>
               <div className="flex items-center justify-between border-b border-border px-3 py-2">
-                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-gold">Widgets</span>
+                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-gold">{view === "terminal" ? "Widgets" : "Algorithms"}</span>
                 <button onClick={() => setSidebarOpen(false)} title="Hide sidebar" className="px-1 font-mono text-textdim hover:text-gold">‹</button>
               </div>
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="search…" className="m-2 rounded border border-border bg-bg3 px-2 py-1.5 font-mono text-[11px] text-textmid outline-none focus:border-gold" />
-              <div className="min-h-0 flex-1 overflow-y-auto pb-2">
-                {catalog.map((cat) => (
-                  <div key={cat.name} className="mb-1">
-                    <div className="px-3 py-1 font-mono text-[9px] uppercase tracking-[0.2em] text-textdim">{cat.name}</div>
-                    {cat.items.map((w) => (
-                      <button
-                        key={w.id}
-                        draggable
-                        onDragStart={(e) => {
-                          e.dataTransfer.setData("application/apex-widget", w.id);
-                          e.dataTransfer.effectAllowed = "copy";
-                          // Carry a little "tab" chip on the cursor.
-                          const ghost = document.createElement("div");
-                          ghost.textContent = `${w.code}  ${w.name}`;
-                          ghost.style.cssText = "position:absolute;top:-1000px;left:-1000px;padding:7px 12px;background:#1b1b1f;border:1px solid #c9a84c;border-radius:8px;color:#c9a84c;font:600 12px 'DM Mono',monospace;box-shadow:0 8px 24px rgba(0,0,0,.6)";
-                          document.body.appendChild(ghost);
-                          e.dataTransfer.setDragImage(ghost, 12, 12);
-                          setTimeout(() => document.body.removeChild(ghost), 0);
-                        }}
-                        onDragEnd={() => { setDragOver(false); setSnapZone(null); }}
-                        onClick={() => { addWidget(w.id); if (isSmall) setSidebarOpen(false); }}
-                        title={`Drag onto the canvas, or click to add ${w.name}`}
-                        className="group/item flex w-full cursor-grab items-center gap-2 px-3 py-1.5 text-left transition hover:bg-bg3 active:cursor-grabbing"
-                      >
-                        <span className="rounded bg-gold/10 px-1 py-0.5 font-mono text-[9px] text-gold">{w.code}</span>
-                        <span className="text-[12px] text-textmid">{w.name}</span>
-                        <span className="ml-auto font-mono text-[11px] text-textdim opacity-0 transition group-hover/item:opacity-100">⠿</span>
-                      </button>
+              {view === "terminal" ? (
+                <>
+                  <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="search…" className="m-2 rounded border border-border bg-bg3 px-2 py-1.5 font-mono text-[11px] text-textmid outline-none focus:border-gold" />
+                  <div className="min-h-0 flex-1 overflow-y-auto pb-2">
+                    {catalog.map((cat) => (
+                      <div key={cat.name} className="mb-1">
+                        <div className="px-3 py-1 font-mono text-[9px] uppercase tracking-[0.2em] text-textdim">{cat.name}</div>
+                        {cat.items.map((w) => (
+                          <button
+                            key={w.id}
+                            draggable
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData("application/apex-widget", w.id);
+                              e.dataTransfer.effectAllowed = "copy";
+                              // Carry a little "tab" chip on the cursor.
+                              const ghost = document.createElement("div");
+                              ghost.textContent = `${w.code}  ${w.name}`;
+                              ghost.style.cssText = "position:absolute;top:-1000px;left:-1000px;padding:7px 12px;background:#1b1b1f;border:1px solid #c9a84c;border-radius:8px;color:#c9a84c;font:600 12px 'DM Mono',monospace;box-shadow:0 8px 24px rgba(0,0,0,.6)";
+                              document.body.appendChild(ghost);
+                              e.dataTransfer.setDragImage(ghost, 12, 12);
+                              setTimeout(() => document.body.removeChild(ghost), 0);
+                            }}
+                            onDragEnd={() => { setDragOver(false); setSnapZone(null); }}
+                            onClick={() => { addWidget(w.id); if (isSmall) setSidebarOpen(false); }}
+                            title={`Drag onto the canvas, or click to add ${w.name}`}
+                            className="group/item flex w-full cursor-grab items-center gap-2 px-3 py-1.5 text-left transition hover:bg-bg3 active:cursor-grabbing"
+                          >
+                            <span className="rounded bg-gold/10 px-1 py-0.5 font-mono text-[9px] text-gold">{w.code}</span>
+                            <span className="text-[12px] text-textmid">{w.name}</span>
+                            <span className="ml-auto font-mono text-[11px] text-textdim opacity-0 transition group-hover/item:opacity-100">⠿</span>
+                          </button>
+                        ))}
+                      </div>
                     ))}
                   </div>
-                ))}
-              </div>
+                </>
+              ) : (
+                <div className="min-h-0 flex-1 overflow-y-auto p-3 text-[12px] leading-relaxed text-textmid">
+                  <div className="mb-2 font-mono text-[9px] uppercase tracking-[0.2em] text-textdim">Guide</div>
+                  <p className="mb-3">Backtest a strategy on <span className="text-gold">20 years</span> of local daily data — fully offline.</p>
+                  <ul className="space-y-2">
+                    <li><span className="text-gold">Single</span> — pick an algorithm (right), set instrument &amp; bars, then <span className="text-gold">Run</span>. The replay animates bar-by-bar; metrics track the replay time.</li>
+                    <li><span className="text-gold">Compare</span> — overlay several algorithms' equity curves on one chart to see which compounds best.</li>
+                    <li><span className="text-gold">+ Create</span> — write a custom Python strategy. It auto-saves after your first save and runs on the local data.</li>
+                  </ul>
+                  <p className="mt-3 text-[11px] text-textdim">Local data: US500, FTSE100, EURUSD · vars include fear &amp; greed, VIX, sentiment.</p>
+                </div>
+              )}
               {/* bottom: settings + sign out */}
               <div className="border-t border-border p-2">
                 <Link href="/settings" className="mb-2 flex items-center gap-2 rounded px-2 py-1.5 text-[12px] text-textmid transition hover:bg-bg3 hover:text-gold">
@@ -557,8 +572,8 @@ export function Terminal() {
             </aside>
             </>
           ) : (
-            <button onClick={() => setSidebarOpen(true)} title="Show widgets" className="flex w-6 shrink-0 items-center justify-center border-r border-border bg-bg2 transition hover:bg-bg3">
-              <span className="font-mono text-[9px] uppercase tracking-[0.3em] text-gold" style={{ writingMode: "vertical-rl" }}>› Widgets</span>
+            <button onClick={() => setSidebarOpen(true)} title="Show sidebar" className="flex w-6 shrink-0 items-center justify-center border-r border-border bg-bg2 transition hover:bg-bg3">
+              <span className="font-mono text-[9px] uppercase tracking-[0.3em] text-gold" style={{ writingMode: "vertical-rl" }}>› {view === "terminal" ? "Widgets" : "Menu"}</span>
             </button>
           )}
 

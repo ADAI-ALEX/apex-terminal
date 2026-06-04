@@ -208,24 +208,29 @@ export function StrategyEditor({
             {savedOnce && (
               <button onClick={() => setConfirmDelete(true)} className="rounded border border-down/40 bg-down/10 px-3 py-1.5 text-xs font-bold text-down hover:bg-down/20">Delete</button>
             )}
-            <button onClick={() => doSave(label, code)} disabled={!valid} className="rounded bg-gold px-4 py-1.5 text-xs font-bold text-bg hover:bg-gold2 disabled:opacity-50">
+            <button onClick={() => doSave(label, code)} disabled={save.status === "saving"} className="btn-gold rounded px-4 py-1.5 text-xs font-bold">
               {savedOnce ? "Save now" : "Save"}
             </button>
             <button onClick={onClose} className="rounded border border-border bg-bg3 px-3 py-1.5 text-xs font-bold text-textmid hover:text-gold">Close</button>
           </div>
+          {!label.trim() && save.status === "error" && (
+            <div className="w-full font-mono text-[11px] font-bold text-down">⚠ Please enter a name for your algorithm.</div>
+          )}
         </div>
 
         {/* Body: editor + cheat-sheet sidebar */}
         <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
           <div className="relative flex min-h-0 flex-1 overflow-hidden bg-[#0a0a0a] font-mono text-[13px] leading-[1.5]">
-            <div ref={gutterRef} className="select-none overflow-hidden border-r border-border/60 bg-bg2/40 py-3 pl-3 pr-2 text-right text-textdim/60" aria-hidden>
+            {/* The editor is always dark, so gutter + default text use fixed
+                light-on-dark colours (theme vars would be invisible in light mode). */}
+            <div ref={gutterRef} className="select-none overflow-hidden border-r border-[#2a2a2a] bg-black/30 py-3 pl-3 pr-2 text-right text-[#8a8a93]" aria-hidden>
               {Array.from({ length: lineCount }, (_, i) => <div key={i}>{i + 1}</div>)}
             </div>
             <div className="relative min-h-0 flex-1">
               <pre
                 ref={preRef}
                 aria-hidden
-                className="pointer-events-none absolute inset-0 m-0 overflow-auto whitespace-pre p-3 text-textmid"
+                className="pointer-events-none absolute inset-0 m-0 overflow-auto whitespace-pre p-3 text-[#d4d4d4]"
                 dangerouslySetInnerHTML={{ __html: highlight(code) }}
               />
               <textarea
@@ -269,18 +274,27 @@ export function StrategyEditor({
         </div>
       </div>
 
-      {/* In-app delete confirmation (matches the app's own modal style) */}
+      {/* In-app delete confirmation — same style as the Sign-out modal */}
       {confirmDelete && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4" onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }}>
-          <div className="w-full max-w-sm rounded-lg border border-border bg-bg2 p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-2 font-mono text-[10px] uppercase tracking-wider text-down">// Delete strategy</div>
-            <p className="mb-4 text-sm text-textmid">
-              Delete <span className="font-bold text-gold">{label || slug}</span>? This permanently removes
-              <span className="font-mono text-textdim"> {slug}.py</span> and cannot be undone.
+          <div className="w-full max-w-sm rounded-md border border-border bg-bg2 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.3em] text-gold">Apex Algo</div>
+            <h2 className="mb-2 text-lg font-bold">Delete strategy?</h2>
+            <p className="mb-6 text-sm text-textmid">
+              This permanently removes <span className="font-bold text-gold">{label || slug}</span>
+              <span className="font-mono text-textdim"> ({slug}.py)</span> and cannot be undone.
             </p>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setConfirmDelete(false)} className="rounded border border-border bg-bg3 px-4 py-1.5 text-xs font-bold text-textmid hover:text-gold">Cancel</button>
-              <button onClick={() => { setConfirmDelete(false); onDelete(slug); }} className="rounded bg-down px-4 py-1.5 text-xs font-bold text-white hover:opacity-90">Delete</button>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                className="rounded border border-border px-4 py-2 font-mono text-[11px] uppercase tracking-wider text-textmid transition hover:border-gold hover:text-gold"
+              >Cancel</button>
+              <button
+                type="button"
+                onClick={() => { setConfirmDelete(false); onDelete(slug); }}
+                className="rounded bg-down px-4 py-2 text-sm font-bold text-white transition hover:opacity-90"
+              >Delete</button>
             </div>
           </div>
         </div>
