@@ -30,6 +30,10 @@ logs/
 *.log
 state.json
 
+# Committed offline backtest history (seeded 20y daily CSVs) — keep these tracked.
+!apex/backtest/data/
+!apex/backtest/data/*.csv
+
 # ─── Node / Next.js ────────────────────────────────────────
 node_modules/
 .next/

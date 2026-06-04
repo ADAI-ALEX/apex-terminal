@@ -9,6 +9,9 @@ export const STATUS_KEY = "apex:onboarding_status";
 export const BACKTEST_REQ_KEY = "apex:backtest_request";
 export const BACKTEST_RES_KEY = "apex:backtest_result";
 export const CHART_KEY = "apex:chart";
+export const STRATEGIES_KEY = "apex:strategies";
+export const STRATEGY_WRITE_KEY = "apex:strategy_write";
+export const STRATEGY_WRITE_ACK_KEY = "apex:strategy_write_ack";
 
 function creds(): { url: string; token: string } | null {
   const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;

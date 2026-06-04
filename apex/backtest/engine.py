@@ -16,8 +16,9 @@ import random
 from dataclasses import asdict, dataclass, field
 
 from apex.config import Direction, Market, StrategyParams, get_settings
+from apex.indicators import engine as ind
 from apex.indicators.engine import build_snapshot
-from apex.models import Candle
+from apex.models import Candle, Signal
 from apex.strategies import ALL_STRATEGIES
 from apex.strategies.regime import classify
 
@@ -40,6 +41,7 @@ class _OpenTrade:
 @dataclass
 class BacktestResult:
     market: str
+    strategy: str
     bars: int
     starting_equity: float
     final_equity: float
@@ -73,8 +75,27 @@ def run_backtest(
     target_pct: float = 10.0,
     total_limit_pct: float = 10.0,
     seed: int = 7,
+    strategy: dict | None = None,
+    exo: dict[str, list[float]] | None = None,
+    rr: float = 1.8,
 ) -> BacktestResult:
+    """Replay ``candles`` through either the live strategy book (default) or a
+    user-authored custom strategy.
+
+    ``strategy`` is the resolved descriptor from :mod:`apex.strategies.store`. When
+    its ``kind`` is ``custom``/``default`` the snippet is evaluated per bar via
+    :class:`~apex.backtest.custom_runner.CompiledStrategy`; ``exo`` carries the
+    aligned niche series (fear_greed/vix/sentiment) it can read. Anything else
+    falls back to the built-in book, so existing call-sites are unaffected.
+    """
     sp = params or get_settings().strategy
+    strategy_name = (strategy or {}).get("name", "book")
+    custom = None
+    if strategy and strategy.get("kind") in ("custom", "default") and strategy.get("code"):
+        from apex.backtest.custom_runner import CompiledStrategy
+
+        custom = CompiledStrategy(str(strategy["code"]), exo=exo)
+
     balance = starting_equity
     peak = starting_equity
     max_total_dd = 0.0
@@ -88,12 +109,39 @@ def run_backtest(
     day_start_eq: dict[str, float] = {}
     day_min_eq: dict[str, float] = {}
 
+    def _record_exit(ot: _OpenTrade, exit_price: float, reason: str, closed_iso: str) -> None:
+        """Book a closed trade into all accumulators (shared by every exit path)."""
+        nonlocal balance, wins, gross_win, gross_loss, rr_sum
+        pnl = ot.unrealised(exit_price)
+        balance += pnl
+        ret = 100.0 * pnl / starting_equity
+        trade_pnls.append(pnl)
+        trade_rets.append(ret)
+        if pnl >= 0:
+            wins += 1
+            gross_win += pnl
+        else:
+            gross_loss += -pnl
+        risk_pts = abs(ot.entry - ot.stop)
+        if risk_pts > 0:
+            rr_sum += abs(exit_price - ot.entry) / risk_pts
+        trade_log.append({
+            "market": market.key, "direction": ot.direction.value,
+            "entry": round(ot.entry, 4), "exit": round(exit_price, 4),
+            "pnl": round(pnl, 2), "ret_pct": round(ret, 3),
+            "opened": ot.opened, "closed": closed_iso,
+            "reason": reason, "strategy": ot.strategy,
+        })
+
     n = len(candles)
     for i in range(min(warmup, n), n):
         bar = candles[i]
         day = bar.time.date().isoformat()
+        # A custom strategy's decision depends only on the bar, so evaluate once
+        # and reuse it for both signal-based exits and entries.
+        decision = custom.decide(i, candles) if custom is not None else None
 
-        # ── manage an open trade against this bar (intrabar) ──────────
+        # ── manage an open trade against this bar (intrabar SL/TP first) ──
         if open_trade is not None:
             exit_price = reason = None
             if open_trade.direction is Direction.BUY:
@@ -107,26 +155,15 @@ def run_backtest(
                 elif bar.low <= open_trade.target:
                     exit_price, reason = open_trade.target, "TP"
             if exit_price is not None:
-                pnl = open_trade.unrealised(exit_price)
-                balance += pnl
-                ret = 100.0 * pnl / starting_equity
-                trade_pnls.append(pnl)
-                trade_rets.append(ret)
-                if pnl >= 0:
-                    wins += 1
-                    gross_win += pnl
-                else:
-                    gross_loss += -pnl
-                risk_pts = abs(open_trade.entry - open_trade.stop)
-                if risk_pts > 0:
-                    rr_sum += abs(exit_price - open_trade.entry) / risk_pts
-                trade_log.append({
-                    "market": market.key, "direction": open_trade.direction.value,
-                    "entry": round(open_trade.entry, 4), "exit": round(exit_price, 4),
-                    "pnl": round(pnl, 2), "ret_pct": round(ret, 3),
-                    "opened": open_trade.opened, "closed": bar.time.isoformat(),
-                    "reason": reason, "strategy": open_trade.strategy,
-                })
+                _record_exit(open_trade, exit_price, reason, bar.time.isoformat())
+                open_trade = None
+
+        # ── custom signal exits: FLAT closes, an opposite signal flips ────
+        if open_trade is not None and decision is not None:
+            flip = ((decision == "BUY" and open_trade.direction is Direction.SELL)
+                    or (decision == "SELL" and open_trade.direction is Direction.BUY))
+            if decision == "FLAT" or flip:
+                _record_exit(open_trade, bar.close, "FLIP" if flip else "FLAT", bar.time.isoformat())
                 open_trade = None
 
         # ── mark floating equity + drawdowns ──────────────────────────
@@ -140,10 +177,13 @@ def run_backtest(
 
         # ── look for a new entry when flat ────────────────────────────
         if open_trade is None:
-            window = candles[: i + 1]
-            snap = build_snapshot(market.key, market.epic, window, sp)
-            snap.regime = classify(market, snap, sp)
-            sig = _best_signal(market, snap, window)
+            if custom is not None:
+                sig = _custom_entry(market, candles, i, decision, sp, atr_stop_mult, rr, strategy_name)
+            else:
+                window = candles[: i + 1]
+                snap = build_snapshot(market.key, market.epic, window, sp)
+                snap.regime = classify(market, snap, sp)
+                sig = _best_signal(market, snap, window)
             if sig is not None and sig.stop_distance > 0:
                 risk_amt = equity * (risk_pct / 100.0)
                 size = max(risk_amt / sig.stop_distance, 0.0)
@@ -155,23 +195,8 @@ def run_backtest(
 
     # close any trade still open at the end
     if open_trade is not None and candles:
-        last = candles[-1].close
-        pnl = open_trade.unrealised(last)
-        balance += pnl
-        trade_pnls.append(pnl)
-        trade_rets.append(100.0 * pnl / starting_equity)
-        if pnl >= 0:
-            wins += 1
-            gross_win += pnl
-        else:
-            gross_loss += -pnl
-        trade_log.append({
-            "market": market.key, "direction": open_trade.direction.value,
-            "entry": round(open_trade.entry, 4), "exit": round(last, 4),
-            "pnl": round(pnl, 2), "ret_pct": round(100.0 * pnl / starting_equity, 3),
-            "opened": open_trade.opened, "closed": candles[-1].time.isoformat(),
-            "reason": "END", "strategy": open_trade.strategy,
-        })
+        _record_exit(open_trade, candles[-1].close, "END", candles[-1].time.isoformat())
+        open_trade = None
 
     trades = len(trade_pnls)
     max_daily_dd = 0.0
@@ -187,6 +212,7 @@ def run_backtest(
 
     return BacktestResult(
         market=market.key,
+        strategy=strategy_name,
         bars=n,
         starting_equity=starting_equity,
         final_equity=final_equity,
@@ -218,6 +244,37 @@ def _best_signal(market: Market, snap, window):  # type: ignore[no-untyped-def]
         if sig is not None:
             candidates.append(sig)
     return max(candidates, key=lambda s: s.confidence) if candidates else None
+
+
+def _custom_entry(
+    market: Market, candles: list[Candle], i: int, decision: str | None,
+    sp: StrategyParams, atr_stop_mult: float, rr: float, strategy_name: str,
+) -> Signal | None:
+    """Turn a custom BUY/SELL decision into an ATR-sized Signal with stop + target.
+
+    Mirrors the strategy book's sizing contract so custom strategies inherit the
+    same risk model: stop = ATR × multiplier (floored at the broker minimum),
+    target = stop × reward:risk.
+    """
+    if decision not in ("BUY", "SELL"):
+        return None
+    window = candles[max(0, i - 250) : i + 1]
+    atr_val = ind.atr(window, sp.atr_period)
+    if not atr_val or atr_val <= 0:
+        return None
+    entry = candles[i].close
+    stop_dist = max(atr_val * atr_stop_mult, market.min_stop_points)
+    target_dist = stop_dist * rr
+    direction = Direction.BUY if decision == "BUY" else Direction.SELL
+    if direction is Direction.BUY:
+        stop, target = entry - stop_dist, entry + target_dist
+    else:
+        stop, target = entry + stop_dist, entry - target_dist
+    return Signal(
+        market_key=market.key, epic=market.epic, strategy=strategy_name,
+        direction=direction, entry=entry, stop=round(stop, 5), target=round(target, 5),
+        target_rr=rr, confidence=0.6, rationale=f"custom:{strategy_name}",
+    )
 
 
 def _monte_carlo(

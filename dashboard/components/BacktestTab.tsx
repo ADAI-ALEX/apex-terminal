@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { StrategyEditor, type Strategy } from "./StrategyEditor";
 
 type Candle = { time: number; open: number; high: number; low: number; close: number };
 type EqPoint = { time: number; equity: number };
@@ -9,23 +11,85 @@ type Result = {
   error?: string; pending?: boolean; mode?: string; market?: string; bars?: number; minutes?: number;
   starting_equity?: number; final_equity?: number; total_return_pct?: number; trades?: number;
   win_rate?: number; profit_factor?: number; avg_rr?: number; expectancy_pct?: number;
-  max_daily_dd_pct?: number; max_total_dd_pct?: number;
+  max_daily_dd_pct?: number; max_total_dd_pct?: number; strategy_label?: string;
   equity_curve?: EqPoint[]; candles?: Candle[]; trade_log?: Trade[]; monte_carlo?: Record<string, number | string>;
 };
 
 const MARKETS = ["US500", "NAS100", "EURUSD", "GBPUSD", "FTSE100", "DAX40"];
+const LOCAL_MARKETS = new Set(["US500", "FTSE100", "EURUSD"]); // have 20y offline data
 const TIMEFRAMES: [number, string][] = [[5, "5m"], [15, "15m"], [30, "30m"], [60, "1h"]];
 const SPEEDS: [number, string][] = [[1, "1×"], [3, "3×"], [8, "8×"], [20, "20×"]];
+
+const STARTER = `# name: My Strategy
+# description: Describe what this algorithm does
+#
+# Runs once per bar. Set \`signal\` to "BUY", "SELL", "FLAT" or "HOLD".
+# Vars: open, high, low, close, volume, price, fear_and_greed, vix, sentiment
+# Fns:  sma(p) ema(p) rsi(p) macd() atr(p) adx(p) bollinger(p,s) highest(p) lowest(p)
+#       crossover(a,b) crossunder(a,b)
+
+upper, mid, lower = bollinger(20, 2)
+
+if rsi(14) < 30 and close < lower and fear_and_greed < 30:
+    signal = "BUY"          # oversold capitulation
+elif rsi(14) > 70 and close > upper and fear_and_greed > 75:
+    signal = "SELL"         # overbought euphoria
+else:
+    signal = "HOLD"
+`;
+
+/** Strict connectivity check used as a guardrail before any backtest run. */
+async function checkOnline(): Promise<boolean> {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return false;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 3000);
+    await fetch("https://www.google.com/generate_204", { mode: "no-cors", cache: "no-store", signal: ctrl.signal });
+    clearTimeout(t);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function BacktestTab() {
   const [market, setMarket] = useState("US500");
   const [minutes, setMinutes] = useState(15);
-  const [bars, setBars] = useState(500);
+  const [bars, setBars] = useState(1500);
   const [riskPct, setRiskPct] = useState(0.4);
   const [running, setRunning] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
   const [result, setResult] = useState<Result | null>(null);
   const [progress, setProgress] = useState(0);
+
+  // Strategy library + custom code editor
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [strategyName, setStrategyName] = useState("book");
+  const [source, setSource] = useState<"local" | "live">("local");
+  const [editor, setEditor] = useState<Strategy | null>(null);
+  const [offlineWarn, setOfflineWarn] = useState("");
+
+  const selectedStrategy = useMemo(
+    () => strategies.find((s) => s.name === strategyName) ?? null,
+    [strategies, strategyName],
+  );
+
+  const loadStrategies = useCallback(async (selectName?: string) => {
+    try {
+      const res = await fetch("/api/strategies", { cache: "no-store" });
+      const data = (await res.json()) as { strategies?: Strategy[] };
+      const list = Array.isArray(data.strategies) ? data.strategies : [];
+      setStrategies(list);
+      if (selectName && list.some((s) => s.name === selectName)) setStrategyName(selectName);
+    } catch { /* dropdown falls back to built-in only */ }
+  }, []);
+
+  useEffect(() => { loadStrategies(); }, [loadStrategies]);
+
+  // Custom / default strategies only run on the local offline dataset.
+  useEffect(() => {
+    if (selectedStrategy && selectedStrategy.kind !== "builtin") setSource("local");
+  }, [selectedStrategy]);
 
   // Replay state
   const [idx, setIdx] = useState(0);     // candles revealed
@@ -40,12 +104,24 @@ export function BacktestTab() {
   const showResults = running || ready;   // render the cards immediately, fill them live
 
   async function run() {
+    // Network guardrail — even though the data is local, block when offline.
+    setOfflineWarn("");
+    setStatusMsg("Checking connection…");
+    if (!(await checkOnline())) {
+      setStatusMsg("");
+      setOfflineWarn("You appear to be offline. A working internet connection is required to run a backtest right now — reconnect and try again.");
+      return;
+    }
+    const effMinutes = source === "local" ? 1440 : minutes;
     setRunning(true); setResult(null); setIdx(0); setPlaying(false); setProgress(8);
     setStatusMsg("Submitting backtest…");
     try {
       const res = await fetch("/api/backtest", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ market, minutes, bars, risk_pct: riskPct, target_pct: 10, total_limit_pct: 10 }),
+        body: JSON.stringify({
+          market, minutes: effMinutes, bars, risk_pct: riskPct, target_pct: 10, total_limit_pct: 10,
+          strategy: strategyName, source,
+        }),
       });
       const data = (await res.json()) as Result & { id?: string; queued?: boolean };
       if (data.queued && data.id) {
@@ -112,30 +188,101 @@ export function BacktestTab() {
     <div className="space-y-4">
       {/* Controls */}
       <div className="rounded-md border border-border bg-bg2 p-4">
-        <div className="mb-3 font-mono text-[10px] uppercase tracking-wider text-gold">// Backtest — replay the strategy book on historical data</div>
+        <div className="mb-3 font-mono text-[10px] uppercase tracking-wider text-gold">// Backtest — replay a strategy on local 20-year history</div>
         <div className="flex flex-wrap items-end gap-3">
-          <Field label="Instrument"><Select value={market} onChange={setMarket} options={MARKETS.map((m) => [m, m])} /></Field>
-          <Field label="Timeframe"><Select value={String(minutes)} onChange={(v) => setMinutes(Number(v))} options={TIMEFRAMES.map(([v, l]) => [String(v), l])} /></Field>
-          <Field label="Bars"><NumberInput value={bars} onChange={setBars} step={50} /></Field>
+          <Field label="Strategy">
+            <div className="flex items-center gap-1.5">
+              <Select
+                value={strategyName}
+                onChange={setStrategyName}
+                options={strategies.map((s) => [s.name, s.label])}
+              />
+              <button
+                onClick={() => setEditor({ name: "", label: "", description: "", kind: "custom", editable: true, code: STARTER })}
+                title="Create Custom Strategy"
+                className="flex h-9 w-9 items-center justify-center rounded border border-gold/50 bg-gold/10 text-lg font-bold text-gold transition hover:bg-gold/20"
+              >+</button>
+              {selectedStrategy?.editable && (
+                <button
+                  onClick={() => setEditor(selectedStrategy)}
+                  title="Edit this custom strategy"
+                  className="flex h-9 items-center justify-center rounded border border-border bg-bg3 px-2 text-xs font-bold text-textmid transition hover:text-gold"
+                >Edit</button>
+              )}
+            </div>
+          </Field>
+          <Field label="Instrument"><Select value={market} onChange={setMarket} options={MARKETS.map((m) => [m, source === "local" && !LOCAL_MARKETS.has(m) ? `${m} (no local)` : m])} /></Field>
+          <Field label="Data source">
+            <div className="flex overflow-hidden rounded border border-border">
+              {(["local", "live"] as const).map((s) => {
+                const disabled = s === "live" && !!selectedStrategy && selectedStrategy.kind !== "builtin";
+                return (
+                  <button
+                    key={s}
+                    onClick={() => !disabled && setSource(s)}
+                    disabled={disabled}
+                    title={disabled ? "Custom strategies run on local data" : undefined}
+                    className={`px-3 py-2 text-xs font-bold transition ${source === s ? "bg-gold/15 text-gold" : "text-textdim hover:text-gold"} ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
+                  >{s === "local" ? "Local 20y" : "Live"}</button>
+                );
+              })}
+            </div>
+          </Field>
+          {source === "local" ? (
+            <Field label="Timeframe"><div className="flex h-9 items-center rounded border border-border bg-bg3/60 px-3 text-sm text-textdim">Daily (D1)</div></Field>
+          ) : (
+            <Field label="Timeframe"><Select value={String(minutes)} onChange={(v) => setMinutes(Number(v))} options={TIMEFRAMES.map(([v, l]) => [String(v), l])} /></Field>
+          )}
+          <Field label="Bars"><NumberInput value={bars} onChange={setBars} step={source === "local" ? 250 : 50} /></Field>
           <Field label="Risk %/trade"><NumberInput value={riskPct} onChange={setRiskPct} step={0.1} /></Field>
           <button onClick={run} disabled={running} className="rounded bg-gold px-6 py-2 text-sm font-bold text-black transition hover:bg-gold2 disabled:opacity-50">
             {running ? "Running…" : "Run backtest"}
           </button>
           {statusMsg && <span className="font-mono text-xs text-textmid">{statusMsg}</span>}
         </div>
+        {selectedStrategy?.description && (
+          <div className="mt-3 font-mono text-[11px] leading-snug text-textdim">{selectedStrategy.description}</div>
+        )}
+        {source === "local" && (
+          <div className="mt-2 font-mono text-[10px] text-textdim">
+            Offline dataset · daily bars 2006→2026 · US500, FTSE100, EURUSD · niche vars: fear &amp; greed, VIX, sentiment.
+          </div>
+        )}
       </div>
 
+      {offlineWarn && (
+        <div className="flex items-start gap-2 rounded-md border border-down/50 bg-down/10 px-4 py-3 text-sm text-down">
+          <span className="text-lg leading-none">⚠</span>
+          <div>
+            <div className="font-bold">Offline — backtest blocked</div>
+            <div className="text-down/90">{offlineWarn}</div>
+          </div>
+        </div>
+      )}
+
       {result?.error && <div className="rounded-md border border-down/40 bg-down/10 px-4 py-3 text-sm text-down">{result.error}</div>}
+
+      {editor && (
+        <StrategyEditor
+          initial={editor}
+          onClose={() => setEditor(null)}
+          onSaved={(s) => loadStrategies(s.name)}
+          onDeleted={(name) => { setEditor(null); if (strategyName === name) setStrategyName("book"); loadStrategies(); }}
+        />
+      )}
 
       {showResults && (
         <>
           <div className="flex flex-wrap items-center gap-3">
             <span className="font-mono text-sm text-textmid">
-              {ready ? `${result!.market} · ${result!.minutes}m · ${result!.bars} bars` : `${market} · ${minutes}m · ${bars} bars`}
+              {ready ? `${result!.market} · ${result!.minutes === 1440 ? "D1" : `${result!.minutes}m`} · ${result!.bars} bars` : `${market} · ${source === "local" ? "D1" : `${minutes}m`} · ${bars} bars`}
             </span>
+            {(ready ? result!.strategy_label : selectedStrategy?.label) && (
+              <span className="rounded bg-gold/10 px-2 py-0.5 font-mono text-[10px] text-gold">{ready ? result!.strategy_label : selectedStrategy?.label}</span>
+            )}
             {ready ? (
-              <span className={`rounded px-2 py-0.5 font-mono text-[10px] ${result!.mode === "IG" ? "bg-up/10 text-up" : "bg-info/10 text-info"}`}>
-                {result!.mode === "IG" ? "REAL IG DATA" : "SIMULATED DATA"}
+              <span className={`rounded px-2 py-0.5 font-mono text-[10px] ${result!.mode === "IG" ? "bg-up/10 text-up" : result!.mode === "LOCAL" ? "bg-up/10 text-up" : "bg-info/10 text-info"}`}>
+                {result!.mode === "IG" ? "REAL IG DATA" : result!.mode === "LOCAL" ? "LOCAL 20Y DATA" : "SIMULATED DATA"}
               </span>
             ) : (
               <span className="animate-pulse rounded bg-gold/10 px-2 py-0.5 font-mono text-[10px] text-gold">RUNNING…</span>
