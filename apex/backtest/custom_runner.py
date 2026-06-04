@@ -212,12 +212,14 @@ class CompiledStrategy:
         self, index: int, candles: Sequence[Candle], *,
         position: int = 0, bars_held: int = 0, equity: float = 100_000.0,
         risk_pct: float = 0.0, leverage: float = 0.0,
-    ) -> str | None:
-        """Return "BUY"/"SELL"/"FLAT" or None (hold) for bar ``index``.
+    ) -> tuple[str | None, float | None]:
+        """Return ``(decision, risk)`` for bar ``index``.
 
-        ``candles`` is the full history up to and including ``index``. The keyword
-        args expose the strategy's live state (``position`` 1/-1/0, ``bars_held``,
-        ``equity``) and run parameters (``risk_pct``, ``leverage``) to the snippet.
+        ``decision`` is "BUY"/"SELL"/"FLAT" or None (hold). ``risk`` is the per-trade
+        risk % the snippet chose by setting ``risk = ...`` (None → use the run
+        default). ``candles`` is the full history up to and including ``index``; the
+        keyword args expose live state (``position`` 1/-1/0, ``bars_held``,
+        ``equity``) and run parameters (``risk_pct`` default, ``leverage``).
         """
         window = list(candles[max(0, index - LOOKBACK + 1) : index + 1])
         if not window:
@@ -252,15 +254,21 @@ class CompiledStrategy:
             # live strategy state + run parameters
             "position": int(position), "bars_held": int(bars_held), "equity": float(equity),
             "risk_pct": float(risk_pct), "leverage": float(leverage),
-            # output
-            "signal": None,
+            # outputs (the snippet sets these)
+            "signal": None, "risk": None,
         }
         try:
             exec(self._code, ns)  # noqa: S102 - sandboxed: restricted builtins + source check
         except Exception:  # fail safe to HOLD, never crash the backtest
-            return None
+            return None, None
         raw = ns.get("signal")
-        if raw is None:
-            return None
-        key = str(raw).strip().upper()
-        return _DECISIONS.get(key, None)
+        decision = _DECISIONS.get(str(raw).strip().upper(), None) if raw is not None else None
+        # The snippet may pick its own per-trade risk %; clamp it to a sane range.
+        chosen = ns.get("risk")
+        try:
+            chosen_risk = float(chosen) if chosen is not None else None
+            if chosen_risk is not None:
+                chosen_risk = max(0.01, min(chosen_risk, 10.0))
+        except (TypeError, ValueError):
+            chosen_risk = None
+        return decision, chosen_risk

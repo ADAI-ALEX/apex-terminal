@@ -59,7 +59,14 @@ function defaultSpaces(): Persisted {
 
 export function Terminal() {
   const { state, status } = useStream();
+  // Persist the active top tab (restored on reload); set in an effect to avoid a
+  // hydration mismatch.
   const [view, setView] = useState<"terminal" | "backtest">("terminal");
+  useEffect(() => {
+    const saved = localStorage.getItem("apex.view");
+    if (saved === "terminal" || saved === "backtest") setView(saved);
+  }, []);
+  useEffect(() => { try { localStorage.setItem("apex.view", view); } catch { /* ignore */ } }, [view]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [query, setQuery] = useState("");
 
@@ -605,7 +612,7 @@ export function Terminal() {
             onDragLeave={(e) => { if (e.currentTarget === e.target) { setDragOver(false); setSnapZone(null); } }}
             onDrop={onDropWidget}
           >
-            {view === "terminal" ? (
+            {view === "terminal" && (
               <ReactFlow
                 nodes={nodes}
                 edges={[]}
@@ -640,11 +647,12 @@ export function Terminal() {
                   />
                 )}
               </ReactFlow>
-            ) : (
-              <div className="absolute inset-0 overflow-auto p-4">
-                <BacktestTab />
-              </div>
             )}
+            {/* BacktestTab stays mounted (hidden when on Terminal) so its results
+                survive tab swaps — only a full page reset clears them. */}
+            <div className={`absolute inset-0 overflow-auto p-4 ${view === "backtest" ? "" : "hidden"}`}>
+              <BacktestTab />
+            </div>
 
             {/* Docked panels (fixed to the edges, stay put while the canvas pans).
                 Left/right run full height; top/bottom sit between them. */}

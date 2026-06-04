@@ -215,6 +215,63 @@ def _fetch_real(key: str, vix_map: dict[date, float]) -> list[dict] | None:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+#  Intraday source — Yahoo 1h / 15m / 5m (shallower history than daily)
+# ──────────────────────────────────────────────────────────────────────────
+# suffix -> (Yahoo interval, range). Yahoo caps intraday depth: ~2y for 1h, ~60d
+# for 15m/5m. The backtester reads these files; no network at run time.
+INTRADAY: dict[str, tuple[str, str]] = {
+    "60m": ("60m", "730d"), "15m": ("15m", "60d"), "5m": ("5m", "60d"),
+}
+
+
+def _yahoo_intraday(symbol: str, interval: str, rng: str) -> list[tuple[datetime, float, float, float, float, float]]:
+    if requests is None:
+        return []
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval={interval}&range={rng}"
+    try:
+        r = requests.get(url, headers=_HEADERS, timeout=25)
+        r.raise_for_status()
+        res = r.json()["chart"]["result"][0]
+        ts = res.get("timestamp") or []
+        q = res["indicators"]["quote"][0]
+        vol = q.get("volume") or [0] * len(ts)
+        rows: list[tuple[datetime, float, float, float, float, float]] = []
+        for i, t in enumerate(ts):
+            o, h, lo, c = q["open"][i], q["high"][i], q["low"][i], q["close"][i]
+            if None in (o, h, lo, c):
+                continue
+            dt = datetime.fromtimestamp(t, tz=timezone.utc)
+            rows.append((dt, float(o), float(h), float(lo), float(c), float(vol[i] or 0)))
+        return rows
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ! Yahoo intraday fetch failed for {symbol} {interval}: {exc}")
+        return []
+
+
+def _fetch_intraday(key: str, interval: str, rng: str, vix_by_date: dict[date, float]) -> list[dict] | None:
+    rows = _yahoo_intraday(YAHOO_SYMBOLS[key], interval, rng)
+    if len(rows) < 200:
+        return None
+    closes = [r[4] for r in rows]
+    vix: list[float] = []
+    last = 18.0
+    for (dt, *_rest) in rows:
+        last = vix_by_date.get(dt.date(), last)
+        vix.append(round(last, 2))
+    fear_greed, sentiment = derive_columns(closes, vix)
+    is_fx = key in ("EURUSD",)
+    rnd = 5 if is_fx else 2
+    out: list[dict] = []
+    for i, (dt, o, h, lo, c, v) in enumerate(rows):
+        out.append({
+            "date": dt.isoformat(), "open": round(o, rnd), "high": round(h, rnd),
+            "low": round(lo, rnd), "close": round(c, rnd), "volume": int(v),
+            "fear_greed": fear_greed[i], "vix": vix[i], "sentiment": sentiment[i],
+        })
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────
 #  Offline source — deterministic calibrated generator
 # ──────────────────────────────────────────────────────────────────────────
 def _anchor_on(key: str, d: date) -> float:
@@ -303,14 +360,31 @@ def _crisis_factor(d: date) -> float:
 FIELDS = ["date", "open", "high", "low", "close", "volume", "fear_greed", "vix", "sentiment"]
 
 
-def write_csv(key: str, rows: list[dict]) -> Path:
+def write_csv(key: str, rows: list[dict], suffix: str = "D1") -> Path:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    path = DATA_DIR / f"{key}_D1.csv"
+    path = DATA_DIR / f"{key}_{suffix}.csv"
     with path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=FIELDS)
         writer.writeheader()
         writer.writerows(rows)
     return path
+
+
+def seed_intraday(force: bool) -> None:
+    """Download 1h / 15m / 5m bars for every instrument (one-time setup)."""
+    vix_by_date = _vix_by_date()
+    for key in YAHOO_SYMBOLS:
+        for suffix, (interval, rng) in INTRADAY.items():
+            path = DATA_DIR / f"{key}_{suffix}.csv"
+            if path.exists() and not force:
+                print(f"= {key} {suffix}: exists. Skipping.")
+                continue
+            rows = _fetch_intraday(key, interval, rng, vix_by_date)
+            if not rows:
+                print(f"  ! {key} {suffix}: no data.")
+                continue
+            write_csv(key, rows, suffix)
+            print(f"+ {key} {suffix}: {len(rows)} bars [{interval} {rng}] {rows[0]['date']} -> {rows[-1]['date']}")
 
 
 def seed(offline: bool, force: bool) -> None:
@@ -339,9 +413,13 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Seed local 20-year daily backtest history.")
     ap.add_argument("--offline", action="store_true", help="Force the calibrated generator (no network).")
     ap.add_argument("--force", action="store_true", help="Overwrite existing CSVs.")
+    ap.add_argument("--intraday", action="store_true", help="Also download 1h/15m/5m bars.")
     args = ap.parse_args()
     print(f"Seeding local history -> {DATA_DIR}")
     seed(offline=args.offline, force=args.force)
+    if args.intraday and not args.offline:
+        print("Seeding intraday history (1h/15m/5m)...")
+        seed_intraday(force=args.force)
     print("Done.")
 
 

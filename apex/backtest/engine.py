@@ -141,12 +141,13 @@ def run_backtest(
         day = bar.time.date().isoformat()
         # A custom strategy's decision depends on the bar + live state, so evaluate
         # once and reuse it for both signal-based exits and entries.
+        chosen_risk: float | None = None
         if custom is not None:
             pos = (1 if open_trade and open_trade.direction is Direction.BUY
                    else -1 if open_trade and open_trade.direction is Direction.SELL else 0)
             held = (i - open_trade.open_index) if open_trade else 0
             eq_now = balance + (open_trade.unrealised(bar.close) if open_trade else 0.0)
-            decision = custom.decide(
+            decision, chosen_risk = custom.decide(
                 i, candles, position=pos, bars_held=held, equity=eq_now,
                 risk_pct=risk_pct, leverage=float(getattr(market, "fca_leverage", 0)),
             )
@@ -197,7 +198,9 @@ def run_backtest(
                 snap.regime = classify(market, snap, sp)
                 sig = _best_signal(market, snap, window)
             if sig is not None and sig.stop_distance > 0:
-                risk_amt = equity * (risk_pct / 100.0)
+                # A custom strategy may dynamically choose its per-trade risk %.
+                entry_risk = chosen_risk if chosen_risk is not None else risk_pct
+                risk_amt = equity * (entry_risk / 100.0)
                 size = max(risk_amt / sig.stop_distance, 0.0)
                 open_trade = _OpenTrade(
                     direction=sig.direction, entry=sig.entry, stop=sig.stop,

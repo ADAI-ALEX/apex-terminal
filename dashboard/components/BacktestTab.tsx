@@ -19,8 +19,14 @@ type Result = {
 const MARKETS = ["US500", "NAS100", "EURUSD", "GBPUSD", "FTSE100", "DAX40"];
 const LOCAL_INSTRUMENTS = ["US500", "FTSE100", "EURUSD", "BTCUSD", "ETHUSD"]; // local offline data
 const LOCAL_MARKETS = new Set(LOCAL_INSTRUMENTS);
-const TIMEFRAMES: [number, string][] = [[5, "5m"], [15, "15m"], [30, "30m"], [60, "1h"]];
+const LIVE_TF: [number, string][] = [[5, "5m"], [15, "15m"], [30, "30m"], [60, "1h"]];
+const LOCAL_TF: [number, string][] = [[1440, "Daily"], [60, "1h"], [15, "15m"], [5, "5m"]];
 const SPEEDS: [number, string][] = [[1, "1×"], [3, "3×"], [8, "8×"], [20, "20×"]];
+function tfLabel(minutes?: number): string {
+  if (minutes === 1440) return "D1";
+  if (minutes === 60) return "1h";
+  return `${minutes ?? 0}m`;
+}
 const PALETTE = ["#c9a84c", "#22c55e", "#3b82f6", "#ef4444", "#a855f7", "#14b8a6", "#f97316", "#ec4899"];
 
 const BUILTIN_BOOK: Strategy = {
@@ -85,7 +91,14 @@ async function submitBacktest(body: Record<string, unknown>, onStatus?: (s: stri
 const KIND_ORDER: Record<string, number> = { builtin: 0, default: 1, custom: 2 };
 
 export function BacktestTab() {
+  // Persist the active sub-tab (restored on reload); set in an effect to avoid a
+  // hydration mismatch.
   const [mode, setMode] = useState<"single" | "compare">("single");
+  useEffect(() => {
+    const saved = localStorage.getItem("apex.algoMode");
+    if (saved === "single" || saved === "compare") setMode(saved);
+  }, []);
+  useEffect(() => { try { localStorage.setItem("apex.algoMode", mode); } catch { /* ignore */ } }, [mode]);
 
   // Strategy library (server list merged with local optimistic drafts/deletes)
   const [serverStrategies, setServerStrategies] = useState<Strategy[]>([]);
@@ -141,10 +154,15 @@ export function BacktestTab() {
         </span>
       </div>
 
+      {/* Both stay mounted (visibility toggle) so results persist when you switch
+          sub-tabs or main tabs — only a full page reset clears them. */}
       <div className="min-h-0 flex-1">
-        {mode === "single"
-          ? <SingleBacktest strategies={strategies} strategyName={strategyName} setStrategyName={setStrategyName} setEditor={setEditor} />
-          : <CompareView strategies={strategies} />}
+        <div className={mode === "single" ? "h-full" : "hidden"}>
+          <SingleBacktest strategies={strategies} strategyName={strategyName} setStrategyName={setStrategyName} setEditor={setEditor} />
+        </div>
+        <div className={mode === "compare" ? "h-full" : "hidden"}>
+          <CompareView strategies={strategies} />
+        </div>
       </div>
 
       {editor && (
@@ -167,9 +185,8 @@ function SingleBacktest({
   strategies: Strategy[]; strategyName: string; setStrategyName: (s: string) => void; setEditor: (s: Strategy | null) => void;
 }) {
   const [market, setMarket] = useState("US500");
-  const [minutes, setMinutes] = useState(15);
+  const [minutes, setMinutes] = useState(1440);
   const [bars, setBars] = useState(1000);
-  const [riskPct, setRiskPct] = useState(0.4);
   const [source, setSource] = useState<"local" | "live">("local");
   const [running, setRunning] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
@@ -189,8 +206,15 @@ function SingleBacktest({
 
   const selectedStrategy = useMemo(() => strategies.find((s) => s.name === strategyName) ?? null, [strategies, strategyName]);
   useEffect(() => { if (selectedStrategy && selectedStrategy.kind !== "builtin") setSource("local"); }, [selectedStrategy]);
-  // Crypto is local-only; if the user switches to Live data, fall back to a live instrument.
-  useEffect(() => { if (source === "live" && !MARKETS.includes(market)) setMarket("US500"); }, [source, market]);
+  // Switching data source: keep instrument + timeframe valid for that source.
+  useEffect(() => {
+    if (source === "live") {
+      if (!MARKETS.includes(market)) setMarket("US500");
+      if (!LIVE_TF.some(([v]) => v === minutes)) setMinutes(15);
+    } else if (!LOCAL_TF.some(([v]) => v === minutes)) {
+      setMinutes(1440);
+    }
+  }, [source, market, minutes]);
 
   async function run() {
     setOfflineWarn(""); setStatusMsg("Checking connection…");
@@ -199,9 +223,8 @@ function SingleBacktest({
       setOfflineWarn("You appear to be offline. A working internet connection is required to run a backtest right now — reconnect and try again.");
       return;
     }
-    const effMinutes = source === "local" ? 1440 : minutes;
     setRunning(true); setResult(null); setIdx(0); setPlaying(false); setProgress(8); setStatusMsg("Submitting backtest…");
-    const r = await submitBacktest({ market, minutes: effMinutes, bars, risk_pct: riskPct, target_pct: 10, total_limit_pct: 10, strategy: strategyName, source }, setStatusMsg);
+    const r = await submitBacktest({ market, minutes, bars, target_pct: 10, total_limit_pct: 10, strategy: strategyName, source }, setStatusMsg);
     setProgress(100); setRunning(false); setStatusMsg("");
     setResult(r);
     if (!r.error && (r.candles?.length ?? 0) > 0) { setIdx(0); setPlaying(true); }
@@ -277,11 +300,8 @@ function SingleBacktest({
                 })}
               </div>
             </Field>
-            {source === "local"
-              ? <Field label="Timeframe"><div className="flex h-9 items-center rounded border border-border bg-bg3/60 px-3 text-sm text-textdim">Daily</div></Field>
-              : <Field label="Timeframe"><Select value={String(minutes)} onChange={(v) => setMinutes(Number(v))} options={TIMEFRAMES.map(([v, l]) => [String(v), l])} /></Field>}
-            <Field label="Bars"><NumberInput value={bars} onChange={setBars} step={source === "local" ? 250 : 50} /></Field>
-            <Field label="Risk %/trade"><NumberInput value={riskPct} onChange={setRiskPct} step={0.1} /></Field>
+            <Field label="Timeframe"><Select value={String(minutes)} onChange={(v) => setMinutes(Number(v))} options={(source === "local" ? LOCAL_TF : LIVE_TF).map(([v, l]) => [String(v), l])} /></Field>
+            <Field label="Bars"><NumberInput value={bars} onChange={setBars} step={source === "local" && minutes === 1440 ? 250 : 100} /></Field>
             <button onClick={run} disabled={running} className="btn-gold h-9 rounded px-6 text-sm font-bold">{running ? "Running…" : "Run backtest"}</button>
             {statusMsg && <span className="font-mono text-xs text-textmid">{statusMsg}</span>}
           </div>
@@ -306,7 +326,7 @@ function SingleBacktest({
             <span className="font-mono text-[10px] uppercase tracking-wider text-gold">// Price &amp; trades</span>
             {ready && (
               <>
-                <span className="font-mono text-[11px] text-textmid">{result!.market} · {result!.minutes === 1440 ? "D1" : `${result!.minutes}m`} · {result!.bars} bars</span>
+                <span className="font-mono text-[11px] text-textmid">{result!.market} · {tfLabel(result!.minutes)} · {result!.bars} bars</span>
                 <span className={`rounded px-2 py-0.5 font-mono text-[10px] ${result!.mode === "PAPER" ? "bg-info/10 text-info" : "bg-up/10 text-up"}`}>
                   {result!.mode === "IG" ? "REAL IG DATA" : result!.mode === "LOCAL" ? "LOCAL 20Y DATA" : result!.mode === "PAPER" ? "SIMULATED" : "DATA"}
                 </span>
@@ -394,7 +414,7 @@ function SingleBacktest({
               ? <EquityChart equity={equity} candles={candles} idx={idx} startEq={startEq} />
               : <div className="flex h-full items-center justify-center px-4 text-center font-mono text-[11px] text-textdim">Equity grows here as the replay runs.</div>}
           </div>
-          {source === "local" && <div className="border-t border-border px-3 py-2 font-mono text-[9px] leading-snug text-textdim">Offline · daily 2006→2026 · US500/FTSE100/EURUSD · vars: fear&amp;greed, VIX, sentiment.</div>}
+          {source === "local" && <div className="border-t border-border px-3 py-2 font-mono text-[9px] leading-snug text-textdim">Offline {tfLabel(minutes)} · US500/FTSE100/EURUSD/BTC/ETH · daily 20y, intraday shallower. Algorithm sets its own risk %.</div>}
         </div>
       </aside>
     </div>
@@ -407,8 +427,8 @@ type CompareRun = { candles: Candle[]; series: CompareSeries[] };
 
 function CompareView({ strategies }: { strategies: Strategy[] }) {
   const [market, setMarket] = useState("US500");
+  const [minutes, setMinutes] = useState(1440);
   const [bars, setBars] = useState(1000);
-  const [riskPct, setRiskPct] = useState(0.4);
   const [selected, setSelected] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState("");
@@ -447,7 +467,7 @@ function CompareView({ strategies }: { strategies: Strategy[] }) {
       const meta = strategies.find((s) => s.name === name);
       const label = meta?.label ?? name;
       setStatus(`Running ${label} (${i + 1}/${selected.length})…`);
-      const r = await submitBacktest({ market, minutes: 1440, bars, risk_pct: riskPct, target_pct: 10, total_limit_pct: 10, strategy: name, source: "local" });
+      const r = await submitBacktest({ market, minutes, bars, target_pct: 10, total_limit_pct: 10, strategy: name, source: "local" });
       const color = PALETTE[i % PALETTE.length];
       if (r.error || !r.equity_curve?.length) {
         out.push({ name, label, color, points: [], finalPct: 0, trades: 0, error: r.error ?? "no data" });
@@ -494,13 +514,13 @@ function CompareView({ strategies }: { strategies: Strategy[] }) {
         <div className="shrink-0 rounded-md border border-border bg-bg2 p-3">
           <div className="flex flex-wrap items-end gap-3">
             <Field label="Instrument"><Select value={market} onChange={setMarket} options={[...LOCAL_MARKETS].map((mk) => [mk, mk])} /></Field>
-            <Field label="Bars"><NumberInput value={bars} onChange={setBars} step={250} /></Field>
-            <Field label="Risk %/trade"><NumberInput value={riskPct} onChange={setRiskPct} step={0.1} /></Field>
+            <Field label="Timeframe"><Select value={String(minutes)} onChange={(v) => setMinutes(Number(v))} options={LOCAL_TF.map(([v, l]) => [String(v), l])} /></Field>
+            <Field label="Bars"><NumberInput value={bars} onChange={setBars} step={minutes === 1440 ? 250 : 100} /></Field>
             <button onClick={doRun} disabled={running || !selected.length} className="btn-gold h-9 rounded px-6 text-sm font-bold">{running ? "Running…" : "Run comparison"}</button>
             {status && <span className="font-mono text-xs text-textmid">{status}</span>}
           </div>
           {offlineWarn && <div className="mt-2 rounded border border-down/50 bg-down/10 px-3 py-2 text-xs text-down">⚠ {offlineWarn}</div>}
-          <div className="mt-1 font-mono text-[10px] text-textdim">Offline · daily 2006→2026 · equity normalised to % return from start.</div>
+          <div className="mt-1 font-mono text-[10px] text-textdim">Offline · {tfLabel(minutes)} bars · equity normalised to % return from start. Algorithms set their own risk.</div>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-bg2">

@@ -28,6 +28,14 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 #: Exogenous (non-price) columns the dataset carries, exposed to custom strategies.
 EXO_FIELDS: tuple[str, ...] = ("fear_greed", "vix", "sentiment")
 
+#: Candle-minutes → on-disk file suffix. Daily is the deep (20y) series; intraday
+#: timeframes are shallower (1h ~2y, 15m/5m ~60d).
+TF_SUFFIX: dict[int, str] = {1440: "D1", 60: "60m", 15: "15m", 5: "5m"}
+
+
+def suffix_for(minutes: int) -> str:
+    return TF_SUFFIX.get(int(minutes), "D1")
+
 
 @dataclass
 class HistoricalSeries:
@@ -52,27 +60,27 @@ class HistoricalSeries:
         )
 
 
-def _path(key: str) -> Path:
-    return DATA_DIR / f"{key.upper()}_D1.csv"
+def _path(key: str, timeframe: str = "D1") -> Path:
+    return DATA_DIR / f"{key.upper()}_{timeframe}.csv"
 
 
-def available() -> list[str]:
-    """Instrument keys that have a local daily CSV on disk."""
+def available(timeframe: str = "D1") -> list[str]:
+    """Instrument keys that have a local CSV for ``timeframe`` on disk."""
     if not DATA_DIR.exists():
         return []
-    return sorted(p.stem.replace("_D1", "") for p in DATA_DIR.glob("*_D1.csv"))
+    return sorted(p.stem.replace(f"_{timeframe}", "") for p in DATA_DIR.glob(f"*_{timeframe}.csv"))
 
 
-def has_local(key: str) -> bool:
-    return _path(key).exists()
+def has_local(key: str, timeframe: str = "D1") -> bool:
+    return _path(key, timeframe).exists()
 
 
-def load(key: str, bars: int = 0) -> HistoricalSeries:
-    """Load the local daily series for ``key``. Returns an empty series if absent.
+def load(key: str, bars: int = 0, timeframe: str = "D1") -> HistoricalSeries:
+    """Load the local ``timeframe`` series for ``key``. Returns empty if absent.
 
-    ``bars`` (>0) trims to the most recent N daily bars.
+    ``bars`` (>0) trims to the most recent N bars.
     """
-    path = _path(key)
+    path = _path(key, timeframe)
     if not path.exists():
         logger.debug("No local dataset for {} at {}", key, path)
         return HistoricalSeries(key=key.upper())
@@ -99,5 +107,5 @@ def load(key: str, bars: int = 0) -> HistoricalSeries:
         return HistoricalSeries(key=key.upper())
 
     series = HistoricalSeries(key=key.upper(), candles=candles, exo=exo)
-    logger.info("Loaded local dataset {}: {} daily bars.", key, len(candles))
+    logger.info("Loaded local dataset {} {}: {} bars.", key, timeframe, len(candles))
     return series.slice(bars) if bars else series

@@ -68,10 +68,20 @@ def test_validate_code_blocks_dangerous_tokens():
 def test_compiled_strategy_decides():
     cs = CompiledStrategy("signal = 'BUY' if close > 100 else 'SELL'")
     candles = _candles(120)
-    assert cs.decide(119, candles) in ("BUY", "SELL")
+    decision, risk = cs.decide(119, candles)
+    assert decision in ("BUY", "SELL") and risk is None
     # a runtime error inside the snippet → HOLD (None), never crashes
     cs2 = CompiledStrategy("signal = 1 / 0")
-    assert cs2.decide(50, candles) is None
+    assert cs2.decide(50, candles) == (None, None)
+
+
+def test_compiled_strategy_code_controlled_risk():
+    cs = CompiledStrategy("signal = 'BUY'\nrisk = 0.75\n")
+    decision, risk = cs.decide(50, _candles(120))
+    assert decision == "BUY" and risk == 0.75
+    # out-of-range risk is clamped to a sane band
+    cs2 = CompiledStrategy("signal = 'BUY'\nrisk = 999\n")
+    assert cs2.decide(50, _candles(120))[1] == 10.0
 
 
 def test_crossover_helper():
@@ -84,7 +94,13 @@ def test_crossover_helper():
 def test_custom_indicators_available():
     code = "u, m, l = bollinger(20, 2)\nsignal = 'BUY' if rsi(14) < 50 and not isnan(atr(14)) else 'HOLD'\n"
     cs = CompiledStrategy(code)
-    assert cs.decide(150, _candles(200)) in ("BUY", None)
+    assert cs.decide(150, _candles(200))[0] in ("BUY", None)
+
+
+def test_donchian_roc_available():
+    code = "u, lo = donchian(20)\nsignal = 'BUY' if close >= u and roc(5) > -100 and stdev(10) >= 0 else 'HOLD'\n"
+    cs = CompiledStrategy(code)
+    assert cs.decide(150, _candles(200))[0] in ("BUY", None)
 
 
 # ── engine custom-signal path ──────────────────────────────────────────────
