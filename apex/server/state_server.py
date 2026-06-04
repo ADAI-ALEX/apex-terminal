@@ -143,7 +143,8 @@ def create_app() -> FastAPI:
             ok, err = validate_code(code)
             if not ok:
                 return {"ok": False, "error": err}
-            meta = store.save(name, code)
+            label = str(payload.get("label", "")).strip() or None
+            meta = store.save(name, code, label)
             return {"ok": True, "action": "save", "strategy": meta.to_dict()}
 
         result = await asyncio.to_thread(_write)

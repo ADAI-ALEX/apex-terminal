@@ -42,17 +42,18 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as {
-    action?: "save" | "delete"; name?: string; code?: string;
+    action?: "save" | "delete"; name?: string; label?: string; code?: string;
   };
   const action = body.action ?? "save";
   const name = (body.name ?? "").trim();
+  const label = (body.label ?? "").trim();
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,48}$/.test(name)) {
     return Response.json({ ok: false, error: "Invalid strategy name." }, { status: 200 });
   }
 
   if (kvEnabled()) {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    await kvSet(STRATEGY_WRITE_KEY, { id, action, name, code: body.code ?? "" });
+    await kvSet(STRATEGY_WRITE_KEY, { id, action, name, label, code: body.code ?? "" });
     // Best-effort: briefly poll for the laptop's ack so the UI can confirm the save.
     for (let i = 0; i < 6; i++) {
       await new Promise((r) => setTimeout(r, 500));
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
     return Response.json({ ok: true, queued: true, id, pending: true });
   }
 
-  const res = await vpsFetch("/strategies", { method: "POST", body: JSON.stringify({ action, name, code: body.code ?? "" }) });
+  const res = await vpsFetch("/strategies", { method: "POST", body: JSON.stringify({ action, name, label, code: body.code ?? "" }) });
   if (!res) return Response.json({ ok: false, error: "Cannot reach the algo state server." }, { status: 200 });
   const data = await res.json().catch(() => ({ ok: false, error: "Bad response from state server." }));
   return Response.json(data, { status: 200 });

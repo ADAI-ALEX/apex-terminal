@@ -398,7 +398,8 @@ class Heartbeat:
             ok, err = validate_code(code)
             if not ok:
                 return {"ok": False, "error": err}
-            store.save(name, code)
+            label = str(req.get("label", "")).strip() or None
+            store.save(name, code, label)
             return {"ok": True, "action": "save", "name": name}
         except Exception as exc:  # noqa: BLE001
             logger.exception("Strategy write failed: {}", exc)

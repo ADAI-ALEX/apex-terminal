@@ -153,10 +153,30 @@ def get(name: str) -> StrategyMeta | None:
     return None
 
 
-def save(name: str, code: str) -> StrategyMeta:
-    """Create/overwrite a **custom** strategy file. Returns its fresh metadata."""
+def _set_name_header(code: str, label: str) -> str:
+    """Ensure the snippet's ``# name:`` header equals ``label`` (the display name).
+
+    Keeps the file self-describing so the dropdown shows the user's chosen name
+    (with spaces) even though the filename is a slug.
+    """
+    lines = code.splitlines()
+    for idx, line in enumerate(lines[:8]):
+        if line.strip().lower().startswith("# name:"):
+            lines[idx] = f"# name: {label}"
+            return "\n".join(lines) + ("\n" if code.endswith("\n") else "")
+    return f"# name: {label}\n" + code
+
+
+def save(name: str, code: str, label: str | None = None) -> StrategyMeta:
+    """Create/overwrite a **custom** strategy file. Returns its fresh metadata.
+
+    ``name`` is the slug (filename). ``label`` is the human display name (may
+    contain spaces); when given it is written into the ``# name:`` header.
+    """
     ensure_dirs()
     path = _safe_path(CUSTOM_DIR, name)
+    if label and label.strip():
+        code = _set_name_header(code, label.strip())
     path.write_text(code, encoding="utf-8")
     logger.info("Saved custom strategy '{}' ({} chars).", name, len(code))
     return _parse_meta(name, code, "custom")

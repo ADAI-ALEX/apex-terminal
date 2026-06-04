@@ -16,11 +16,18 @@ type SaveState = { status: "idle" | "saving" | "saved" | "error"; msg?: string }
 
 const AUTOSAVE_MS = 2000;
 
+/** Display name -> filename slug (spaces become underscores). */
+function slugify(label: string): string {
+  return label.trim().replace(/\s+/g, "_").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 49);
+}
+function slugValid(slug: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,48}$/.test(slug);
+}
+
 const PY_KEYWORDS = new Set([
   "if", "elif", "else", "and", "or", "not", "in", "is", "for", "while", "return",
   "True", "False", "None", "def", "break", "continue", "pass", "import", "as", "with",
 ]);
-// Cheat-sheet identifiers (variables + functions injected into the sandbox).
 const API_NAMES = new Set([
   "open", "high", "low", "close", "volume", "price", "fear_and_greed", "fear_greed",
   "vix", "sentiment", "sma", "ema", "rsi", "macd", "atr", "adx", "bollinger",
@@ -74,7 +81,6 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-// Token-based highlighter: comments, strings, numbers, then keyword/api/plain words.
 function highlight(code: string): string {
   const re = /(#[^\n]*)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\d+\.?\d*)|([A-Za-z_]\w*)/g;
   let out = "";
@@ -92,60 +98,68 @@ function highlight(code: string): string {
     last = m.index + tok.length;
   }
   out += escapeHtml(code.slice(last));
-  return out + "\n"; // trailing newline keeps the last line visible under the caret
+  return out + "\n";
 }
 
 export function StrategyEditor({
-  initial, onClose, onSaved, onDeleted,
+  initial, onClose, onSaved, onDelete,
 }: {
   initial: Strategy;
   onClose: () => void;
   onSaved: (s: Strategy) => void;
-  onDeleted: (name: string) => void;
+  onDelete: (slug: string) => void; // parent removes it from the list + closes (optimistic)
 }) {
-  const isNew = initial.name === ""; // new drafts arrive with an empty name
-  const [name, setName] = useState(initial.name);
+  const isNew = initial.name === ""; // new drafts arrive with an empty slug
+  const [label, setLabel] = useState(initial.label || "");
   const [code, setCode] = useState(initial.code);
-  const [save, setSave] = useState<SaveState>({ status: "idle" });
+  // First save must be manual; auto-save only kicks in afterwards (existing strategies are already saved).
+  const [savedOnce, setSavedOnce] = useState(!isNew);
+  const [save, setSave] = useState<SaveState>(isNew ? { status: "idle" } : { status: "saved", msg: "Saved" });
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   const taRef = useRef<HTMLTextAreaElement>(null);
   const preRef = useRef<HTMLPreElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
-  const savedRef = useRef<{ name: string; code: string }>({ name: initial.name, code: initial.code });
+  const savedRef = useRef<{ label: string; code: string }>({ label: initial.label, code: initial.code });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const nameValid = /^[A-Za-z0-9][A-Za-z0-9_-]{0,48}$/.test(name);
+  const slug = isNew ? slugify(label) : initial.name;
+  const valid = label.trim().length > 0 && slugValid(slug);
   const lineCount = useMemo(() => code.split("\n").length, [code]);
 
-  const doSave = useCallback(async (n: string, c: string) => {
-    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,48}$/.test(n)) {
-      setSave({ status: "error", msg: "Name must be letters/numbers/-/_ (no spaces)." });
+  const doSave = useCallback(async (l: string, c: string) => {
+    const sg = isNew ? slugify(l) : initial.name;
+    if (!l.trim() || !slugValid(sg)) {
+      setSave({ status: "error", msg: "Enter a name (letters/numbers/spaces)." });
       return;
     }
     setSave({ status: "saving" });
     try {
       const res = await fetch("/api/strategies", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "save", name: n, code: c }),
+        body: JSON.stringify({ action: "save", name: sg, label: l.trim(), code: c }),
       });
       const data = (await res.json()) as { ok?: boolean; error?: string; pending?: boolean };
       if (data.ok === false) { setSave({ status: "error", msg: data.error ?? "Save failed." }); return; }
-      savedRef.current = { name: n, code: c };
-      setSave({ status: "saved", msg: data.pending ? "Queued (engine offline) — saves when it reconnects." : undefined });
-      onSaved({ ...initial, name: n, code: c, kind: "custom", editable: true, label: n });
+      savedRef.current = { label: l, code: c };
+      setSavedOnce(true);
+      setSave({ status: "saved", msg: data.pending ? "Queued — saves when the engine reconnects." : "Saved" });
+      onSaved({ name: sg, label: l.trim(), description: initial.description, kind: "custom", editable: true, code: c });
     } catch {
       setSave({ status: "error", msg: "Network error while saving." });
     }
-  }, [initial, onSaved]);
+  }, [initial.name, initial.description, isNew, onSaved]);
 
-  // Debounced auto-save: 2s after the user stops typing (name or code change).
+  // Debounced auto-save — only AFTER the first manual save.
   useEffect(() => {
-    if (name === savedRef.current.name && code === savedRef.current.code) return;
-    if (!nameValid) { setSave({ status: "error", msg: "Enter a valid name to enable auto-save." }); return; }
+    if (!savedOnce) return;
+    if (label === savedRef.current.label && code === savedRef.current.code) return;
+    if (!valid) { setSave({ status: "error", msg: "Enter a valid name to keep auto-saving." }); return; }
     setSave({ status: "idle" });
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => doSave(name, code), AUTOSAVE_MS);
+    timer.current = setTimeout(() => doSave(label, code), AUTOSAVE_MS);
     return () => { if (timer.current) clearTimeout(timer.current); };
-  }, [name, code, nameValid, doSave]);
+  }, [label, code, valid, savedOnce, doSave]);
 
   const syncScroll = useCallback(() => {
     if (preRef.current && taRef.current) {
@@ -166,20 +180,6 @@ export function StrategyEditor({
     }
   }, [code]);
 
-  async function handleDelete() {
-    if (!confirm(`Delete custom strategy "${name}"? This cannot be undone.`)) return;
-    setSave({ status: "saving" });
-    try {
-      await fetch("/api/strategies", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete", name }),
-      });
-      onDeleted(name);
-    } catch {
-      setSave({ status: "error", msg: "Delete failed." });
-    }
-  }
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 sm:p-6" onClick={onClose}>
       <div
@@ -188,31 +188,35 @@ export function StrategyEditor({
       >
         {/* Header */}
         <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3">
-          <span className="font-mono text-[10px] uppercase tracking-wider text-gold">// Custom Strategy Editor</span>
+          <span className="font-mono text-[10px] uppercase tracking-wider text-gold">// {isNew ? "New" : "Edit"} Strategy</span>
           <div className="flex items-center gap-2">
             <label className="font-mono text-[9px] uppercase tracking-wider text-textdim">Name</label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value.replace(/\s+/g, "_"))}
-              readOnly={!isNew}
-              placeholder="my_strategy"
-              className={`w-48 rounded border px-2 py-1 font-mono text-sm outline-none ${nameValid || !name ? "border-border" : "border-down"} bg-bg3 ${!isNew ? "opacity-70" : "focus:border-gold"}`}
-            />
-            {!isNew && <span className="font-mono text-[9px] text-textdim">(name locked)</span>}
+            <div>
+              <input
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="My Strategy"
+                className={`w-56 rounded border px-2 py-1 font-mono text-sm outline-none bg-bg3 ${valid || !label ? "border-border focus:border-gold" : "border-down"}`}
+              />
+              {label && (
+                <div className="mt-0.5 font-mono text-[9px] text-textdim">saved as <span className="text-textmid">{slug || "—"}.py</span></div>
+              )}
+            </div>
           </div>
-          <SaveBadge save={save} />
+          <SaveBadge save={save} savedOnce={savedOnce} />
           <div className="ml-auto flex items-center gap-2">
-            {initial.editable && (
-              <button onClick={handleDelete} className="rounded border border-down/40 bg-down/10 px-3 py-1.5 text-xs font-bold text-down hover:bg-down/20">Delete</button>
+            {savedOnce && (
+              <button onClick={() => setConfirmDelete(true)} className="rounded border border-down/40 bg-down/10 px-3 py-1.5 text-xs font-bold text-down hover:bg-down/20">Delete</button>
             )}
-            <button onClick={() => doSave(name, code)} disabled={!nameValid} className="rounded bg-gold px-4 py-1.5 text-xs font-bold text-black hover:bg-gold2 disabled:opacity-50">Save now</button>
+            <button onClick={() => doSave(label, code)} disabled={!valid} className="rounded bg-gold px-4 py-1.5 text-xs font-bold text-bg hover:bg-gold2 disabled:opacity-50">
+              {savedOnce ? "Save now" : "Save"}
+            </button>
             <button onClick={onClose} className="rounded border border-border bg-bg3 px-3 py-1.5 text-xs font-bold text-textmid hover:text-gold">Close</button>
           </div>
         </div>
 
         {/* Body: editor + cheat-sheet sidebar */}
         <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-          {/* Editor */}
           <div className="relative flex min-h-0 flex-1 overflow-hidden bg-[#0a0a0a] font-mono text-[13px] leading-[1.5]">
             <div ref={gutterRef} className="select-none overflow-hidden border-r border-border/60 bg-bg2/40 py-3 pl-3 pr-2 text-right text-textdim/60" aria-hidden>
               {Array.from({ length: lineCount }, (_, i) => <div key={i}>{i + 1}</div>)}
@@ -238,7 +242,6 @@ export function StrategyEditor({
             </div>
           </div>
 
-          {/* Cheat sheet */}
           <aside className="min-h-0 w-full shrink-0 overflow-auto border-t border-border bg-bg2 p-3 lg:w-72 lg:border-l lg:border-t-0">
             <div className="mb-2 font-mono text-[10px] uppercase tracking-wider text-gold">// Cheat Sheet</div>
             <p className="mb-3 text-[11px] leading-snug text-textdim">
@@ -266,7 +269,23 @@ export function StrategyEditor({
         </div>
       </div>
 
-      {/* token colours for the highlighter (scoped, theme-aware) */}
+      {/* In-app delete confirmation (matches the app's own modal style) */}
+      {confirmDelete && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4" onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }}>
+          <div className="w-full max-w-sm rounded-lg border border-border bg-bg2 p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-2 font-mono text-[10px] uppercase tracking-wider text-down">// Delete strategy</div>
+            <p className="mb-4 text-sm text-textmid">
+              Delete <span className="font-bold text-gold">{label || slug}</span>? This permanently removes
+              <span className="font-mono text-textdim"> {slug}.py</span> and cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setConfirmDelete(false)} className="rounded border border-border bg-bg3 px-4 py-1.5 text-xs font-bold text-textmid hover:text-gold">Cancel</button>
+              <button onClick={() => { setConfirmDelete(false); onDelete(slug); }} className="rounded bg-down px-4 py-1.5 text-xs font-bold text-white hover:opacity-90">Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style jsx global>{`
         .tk-com { color: #6b7280; font-style: italic; }
         .tk-str { color: #86c06c; }
@@ -291,7 +310,10 @@ function insertAtCursor(
   requestAnimationFrame(() => { ta.focus(); ta.selectionStart = ta.selectionEnd = s + text.length; });
 }
 
-function SaveBadge({ save }: { save: SaveState }) {
+function SaveBadge({ save, savedOnce }: { save: SaveState; savedOnce: boolean }) {
+  if (!savedOnce && save.status === "idle") {
+    return <span className="font-mono text-[11px] text-textdim" title="Save once to enable auto-save">Save to enable auto-save</span>;
+  }
   const map = {
     idle: ["•", "text-textdim", "Auto-save on"],
     saving: ["⟳", "text-info animate-pulse", "Saving…"],

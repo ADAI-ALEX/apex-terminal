@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { StrategyEditor, type Strategy } from "./StrategyEditor";
+import { chartColors } from "@/lib/theme";
 
 type Candle = { time: number; open: number; high: number; low: number; close: number };
 type EqPoint = { time: number; equity: number };
@@ -19,6 +20,12 @@ const MARKETS = ["US500", "NAS100", "EURUSD", "GBPUSD", "FTSE100", "DAX40"];
 const LOCAL_MARKETS = new Set(["US500", "FTSE100", "EURUSD"]); // have 20y offline data
 const TIMEFRAMES: [number, string][] = [[5, "5m"], [15, "15m"], [30, "30m"], [60, "1h"]];
 const SPEEDS: [number, string][] = [[1, "1×"], [3, "3×"], [8, "8×"], [20, "20×"]];
+
+const BUILTIN_BOOK: Strategy = {
+  name: "book", label: "Strategy Book (built-in)",
+  description: "The live multi-strategy book: EMA-trend, RSI-reversion and ATR-breakout, gated by the regime detector.",
+  kind: "builtin", editable: false, code: "",
+};
 
 const STARTER = `# name: My Strategy
 # description: Describe what this algorithm does
@@ -52,6 +59,8 @@ async function checkOnline(): Promise<boolean> {
   }
 }
 
+const KIND_ORDER: Record<string, number> = { builtin: 0, default: 1, custom: 2 };
+
 export function BacktestTab() {
   const [market, setMarket] = useState("US500");
   const [minutes, setMinutes] = useState(15);
@@ -61,27 +70,50 @@ export function BacktestTab() {
   const [statusMsg, setStatusMsg] = useState("");
   const [result, setResult] = useState<Result | null>(null);
   const [progress, setProgress] = useState(0);
+  const [offlineWarn, setOfflineWarn] = useState("");
 
-  // Strategy library + custom code editor
-  const [strategies, setStrategies] = useState<Strategy[]>([]);
+  // Strategy library (server list merged with local optimistic drafts/deletes)
+  const [serverStrategies, setServerStrategies] = useState<Strategy[]>([]);
+  const [localDrafts, setLocalDrafts] = useState<Strategy[]>([]);
+  const [deleted, setDeleted] = useState<string[]>([]);
   const [strategyName, setStrategyName] = useState("book");
   const [source, setSource] = useState<"local" | "live">("local");
   const [editor, setEditor] = useState<Strategy | null>(null);
-  const [offlineWarn, setOfflineWarn] = useState("");
+
+  // Replay state
+  const [idx, setIdx] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(3);
+
+  const candles = result?.candles ?? [];
+  const equity = result?.equity_curve ?? [];
+  const trades = result?.trade_log ?? [];
+  const startEq = result?.starting_equity ?? 100_000;
+  const ready = !!(result && !result.error);
+
+  // Merge server + local so a just-saved strategy shows instantly and a just-deleted
+  // one disappears instantly — independent of relay lag.
+  const strategies = useMemo(() => {
+    const map = new Map<string, Strategy>();
+    for (const s of serverStrategies) map.set(s.name, s);
+    for (const s of localDrafts) map.set(s.name, s);
+    for (const d of deleted) map.delete(d);
+    if (!map.has("book")) map.set("book", BUILTIN_BOOK);
+    return [...map.values()].sort((a, b) =>
+      (KIND_ORDER[a.kind] - KIND_ORDER[b.kind]) || a.label.localeCompare(b.label));
+  }, [serverStrategies, localDrafts, deleted]);
 
   const selectedStrategy = useMemo(
     () => strategies.find((s) => s.name === strategyName) ?? null,
     [strategies, strategyName],
   );
 
-  const loadStrategies = useCallback(async (selectName?: string) => {
+  const loadStrategies = useCallback(async () => {
     try {
       const res = await fetch("/api/strategies", { cache: "no-store" });
       const data = (await res.json()) as { strategies?: Strategy[] };
-      const list = Array.isArray(data.strategies) ? data.strategies : [];
-      setStrategies(list);
-      if (selectName && list.some((s) => s.name === selectName)) setStrategyName(selectName);
-    } catch { /* dropdown falls back to built-in only */ }
+      if (Array.isArray(data.strategies)) setServerStrategies(data.strategies);
+    } catch { /* dropdown falls back to merged/built-in */ }
   }, []);
 
   useEffect(() => { loadStrategies(); }, [loadStrategies]);
@@ -91,20 +123,26 @@ export function BacktestTab() {
     if (selectedStrategy && selectedStrategy.kind !== "builtin") setSource("local");
   }, [selectedStrategy]);
 
-  // Replay state
-  const [idx, setIdx] = useState(0);     // candles revealed
-  const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState(3);
+  function onSavedStrategy(s: Strategy) {
+    setLocalDrafts((prev) => [...prev.filter((p) => p.name !== s.name), s]);
+    setDeleted((prev) => prev.filter((d) => d !== s.name));
+    setStrategyName(s.name);
+    loadStrategies();
+  }
 
-  const candles = result?.candles ?? [];
-  const equity = result?.equity_curve ?? [];
-  const trades = result?.trade_log ?? [];
-  const startEq = result?.starting_equity ?? 100_000;
-  const ready = !!(result && !result.error);
-  const showResults = running || ready;   // render the cards immediately, fill them live
+  // Optimistic delete — update the UI instantly, fire the request in the background.
+  function onDeleteStrategy(slug: string) {
+    setEditor(null);
+    setDeleted((prev) => (prev.includes(slug) ? prev : [...prev, slug]));
+    setLocalDrafts((prev) => prev.filter((p) => p.name !== slug));
+    if (strategyName === slug) setStrategyName("book");
+    void fetch("/api/strategies", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "delete", name: slug }),
+    }).catch(() => { /* best-effort; UI already reflects the deletion */ });
+  }
 
   async function run() {
-    // Network guardrail — even though the data is local, block when offline.
     setOfflineWarn("");
     setStatusMsg("Checking connection…");
     if (!(await checkOnline())) {
@@ -146,14 +184,12 @@ export function BacktestTab() {
     if (!r.error && (r.candles?.length ?? 0) > 0) { setIdx(0); setPlaying(true); }
   }
 
-  // Animate the progress bar toward ~96% while running (snaps to 100% on finish).
   useEffect(() => {
     if (!running) return;
     const id = setInterval(() => setProgress((p) => Math.min(96, p + (96 - p) * 0.08)), 140);
     return () => clearInterval(id);
   }, [running]);
 
-  // Replay ticker.
   useEffect(() => {
     if (!playing || candles.length === 0) return;
     const id = setInterval(() => {
@@ -166,7 +202,6 @@ export function BacktestTab() {
     return () => clearInterval(id);
   }, [playing, speed, candles.length]);
 
-  // Live metrics up to the current replay point.
   const live = useMemo(() => {
     if (!candles.length) return null;
     const cut = candles[Math.max(0, Math.min(idx, candles.length) - 1)]?.time ?? 0;
@@ -178,251 +213,261 @@ export function BacktestTab() {
     const wins = done.filter((t) => t.pnl >= 0).length;
     return {
       bar: Math.min(idx, candles.length), total: candles.length,
-      date: cut ? new Date(cut * 1000).toLocaleString() : "—",
+      date: cut ? new Date(cut * 1000).toLocaleDateString() : "—",
       ret: (100 * (lastEq - startEq)) / startEq, equity: lastEq,
       maxDD, trades: done.length, winRate: done.length ? (100 * wins) / done.length : 0,
     };
   }, [idx, candles, equity, trades, startEq]);
 
+  const hasData = candles.length > 0;
+
   return (
-    <div className="space-y-4">
-      {/* Controls */}
-      <div className="rounded-md border border-border bg-bg2 p-4">
-        <div className="mb-3 font-mono text-[10px] uppercase tracking-wider text-gold">// Backtest — replay a strategy on local 20-year history</div>
-        <div className="flex flex-wrap items-end gap-3">
-          <Field label="Strategy">
-            <div className="flex items-center gap-1.5">
-              <Select
-                value={strategyName}
-                onChange={setStrategyName}
-                options={strategies.map((s) => [s.name, s.label])}
-              />
-              <button
-                onClick={() => setEditor({ name: "", label: "", description: "", kind: "custom", editable: true, code: STARTER })}
-                title="Create Custom Strategy"
-                className="flex h-9 w-9 items-center justify-center rounded border border-gold/50 bg-gold/10 text-lg font-bold text-gold transition hover:bg-gold/20"
-              >+</button>
-              {selectedStrategy?.editable && (
-                <button
-                  onClick={() => setEditor(selectedStrategy)}
-                  title="Edit this custom strategy"
-                  className="flex h-9 items-center justify-center rounded border border-border bg-bg3 px-2 text-xs font-bold text-textmid transition hover:text-gold"
-                >Edit</button>
-              )}
+    <div className="flex h-full min-h-0 flex-col gap-3 lg:flex-row">
+      {/* ── CENTER: controls · chart · metrics ───────────────────────── */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+        {/* Controls */}
+        <div className="shrink-0 rounded-md border border-border bg-bg2 p-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="Instrument"><Select value={market} onChange={setMarket} options={MARKETS.map((m) => [m, source === "local" && !LOCAL_MARKETS.has(m) ? `${m} (no local)` : m])} /></Field>
+            <Field label="Data source">
+              <div className="flex h-9 overflow-hidden rounded border border-border">
+                {(["local", "live"] as const).map((s) => {
+                  const disabled = s === "live" && !!selectedStrategy && selectedStrategy.kind !== "builtin";
+                  return (
+                    <button key={s} onClick={() => !disabled && setSource(s)} disabled={disabled}
+                      title={disabled ? "Custom strategies run on local data" : undefined}
+                      className={`px-3 text-xs font-bold transition ${source === s ? "bg-gold/15 text-gold" : "text-textdim hover:text-gold"} ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
+                    >{s === "local" ? "Local 20y" : "Live"}</button>
+                  );
+                })}
+              </div>
+            </Field>
+            {source === "local"
+              ? <Field label="Timeframe"><div className="flex h-9 items-center rounded border border-border bg-bg3/60 px-3 text-sm text-textdim">Daily</div></Field>
+              : <Field label="Timeframe"><Select value={String(minutes)} onChange={(v) => setMinutes(Number(v))} options={TIMEFRAMES.map(([v, l]) => [String(v), l])} /></Field>}
+            <Field label="Bars"><NumberInput value={bars} onChange={setBars} step={source === "local" ? 250 : 50} /></Field>
+            <Field label="Risk %/trade"><NumberInput value={riskPct} onChange={setRiskPct} step={0.1} /></Field>
+            <button onClick={run} disabled={running} className="h-9 rounded bg-gold px-6 text-sm font-bold text-bg transition hover:bg-gold2 disabled:opacity-50">
+              {running ? "Running…" : "Run backtest"}
+            </button>
+            {statusMsg && <span className="font-mono text-xs text-textmid">{statusMsg}</span>}
+          </div>
+          {running && !hasData && (
+            <div className="mt-3 h-1.5 w-full overflow-hidden rounded bg-bg3">
+              <div className="h-full rounded bg-gradient-to-r from-gold/70 to-gold transition-all duration-150" style={{ width: `${progress}%` }} />
             </div>
-          </Field>
-          <Field label="Instrument"><Select value={market} onChange={setMarket} options={MARKETS.map((m) => [m, source === "local" && !LOCAL_MARKETS.has(m) ? `${m} (no local)` : m])} /></Field>
-          <Field label="Data source">
-            <div className="flex overflow-hidden rounded border border-border">
-              {(["local", "live"] as const).map((s) => {
-                const disabled = s === "live" && !!selectedStrategy && selectedStrategy.kind !== "builtin";
-                return (
-                  <button
-                    key={s}
-                    onClick={() => !disabled && setSource(s)}
-                    disabled={disabled}
-                    title={disabled ? "Custom strategies run on local data" : undefined}
-                    className={`px-3 py-2 text-xs font-bold transition ${source === s ? "bg-gold/15 text-gold" : "text-textdim hover:text-gold"} ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
-                  >{s === "local" ? "Local 20y" : "Live"}</button>
-                );
-              })}
-            </div>
-          </Field>
-          {source === "local" ? (
-            <Field label="Timeframe"><div className="flex h-9 items-center rounded border border-border bg-bg3/60 px-3 text-sm text-textdim">Daily (D1)</div></Field>
-          ) : (
-            <Field label="Timeframe"><Select value={String(minutes)} onChange={(v) => setMinutes(Number(v))} options={TIMEFRAMES.map(([v, l]) => [String(v), l])} /></Field>
           )}
-          <Field label="Bars"><NumberInput value={bars} onChange={setBars} step={source === "local" ? 250 : 50} /></Field>
-          <Field label="Risk %/trade"><NumberInput value={riskPct} onChange={setRiskPct} step={0.1} /></Field>
-          <button onClick={run} disabled={running} className="rounded bg-gold px-6 py-2 text-sm font-bold text-black transition hover:bg-gold2 disabled:opacity-50">
-            {running ? "Running…" : "Run backtest"}
-          </button>
-          {statusMsg && <span className="font-mono text-xs text-textmid">{statusMsg}</span>}
         </div>
-        {selectedStrategy?.description && (
-          <div className="mt-3 font-mono text-[11px] leading-snug text-textdim">{selectedStrategy.description}</div>
-        )}
-        {source === "local" && (
-          <div className="mt-2 font-mono text-[10px] text-textdim">
-            Offline dataset · daily bars 2006→2026 · US500, FTSE100, EURUSD · niche vars: fear &amp; greed, VIX, sentiment.
+
+        {offlineWarn && (
+          <div className="flex shrink-0 items-start gap-2 rounded-md border border-down/50 bg-down/10 px-4 py-2.5 text-sm text-down">
+            <span className="text-lg leading-none">⚠</span>
+            <div><div className="font-bold">Offline — backtest blocked</div><div className="text-down/90">{offlineWarn}</div></div>
           </div>
         )}
-      </div>
+        {result?.error && <div className="shrink-0 rounded-md border border-down/40 bg-down/10 px-4 py-2.5 text-sm text-down">{result.error}</div>}
 
-      {offlineWarn && (
-        <div className="flex items-start gap-2 rounded-md border border-down/50 bg-down/10 px-4 py-3 text-sm text-down">
-          <span className="text-lg leading-none">⚠</span>
-          <div>
-            <div className="font-bold">Offline — backtest blocked</div>
-            <div className="text-down/90">{offlineWarn}</div>
-          </div>
-        </div>
-      )}
-
-      {result?.error && <div className="rounded-md border border-down/40 bg-down/10 px-4 py-3 text-sm text-down">{result.error}</div>}
-
-      {editor && (
-        <StrategyEditor
-          initial={editor}
-          onClose={() => setEditor(null)}
-          onSaved={(s) => loadStrategies(s.name)}
-          onDeleted={(name) => { setEditor(null); if (strategyName === name) setStrategyName("book"); loadStrategies(); }}
-        />
-      )}
-
-      {showResults && (
-        <>
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="font-mono text-sm text-textmid">
-              {ready ? `${result!.market} · ${result!.minutes === 1440 ? "D1" : `${result!.minutes}m`} · ${result!.bars} bars` : `${market} · ${source === "local" ? "D1" : `${minutes}m`} · ${bars} bars`}
-            </span>
-            {(ready ? result!.strategy_label : selectedStrategy?.label) && (
-              <span className="rounded bg-gold/10 px-2 py-0.5 font-mono text-[10px] text-gold">{ready ? result!.strategy_label : selectedStrategy?.label}</span>
+        {/* CHART (hero, always on screen) */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-bg2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border px-3 py-2">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-gold">// Price &amp; trades</span>
+            {ready && (
+              <>
+                <span className="font-mono text-[11px] text-textmid">{result!.market} · {result!.minutes === 1440 ? "D1" : `${result!.minutes}m`} · {result!.bars} bars</span>
+                <span className={`rounded px-2 py-0.5 font-mono text-[10px] ${result!.mode === "PAPER" ? "bg-info/10 text-info" : "bg-up/10 text-up"}`}>
+                  {result!.mode === "IG" ? "REAL IG DATA" : result!.mode === "LOCAL" ? "LOCAL 20Y DATA" : result!.mode === "PAPER" ? "SIMULATED" : "DATA"}
+                </span>
+              </>
             )}
-            {ready ? (
-              <span className={`rounded px-2 py-0.5 font-mono text-[10px] ${result!.mode === "IG" ? "bg-up/10 text-up" : result!.mode === "LOCAL" ? "bg-up/10 text-up" : "bg-info/10 text-info"}`}>
-                {result!.mode === "IG" ? "REAL IG DATA" : result!.mode === "LOCAL" ? "LOCAL 20Y DATA" : "SIMULATED DATA"}
-              </span>
-            ) : (
-              <span className="animate-pulse rounded bg-gold/10 px-2 py-0.5 font-mono text-[10px] text-gold">RUNNING…</span>
+            {hasData && live && (
+              <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px]">
+                <Chip label="bar" value={`${live.bar}/${live.total}`} />
+                <Chip label="date" value={live.date} />
+                <Chip label="equity" value={`£${live.equity.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} />
+                <Chip label="ret" value={`${live.ret >= 0 ? "+" : ""}${live.ret.toFixed(2)}%`} tone={live.ret >= 0 ? "up" : "down"} />
+                <Chip label="DD" value={`${live.maxDD.toFixed(2)}%`} tone="down" />
+              </div>
             )}
           </div>
 
-          {!ready && (
-            <div className="rounded-md border border-border bg-bg2 p-3">
-              <div className="mb-2 flex items-center justify-between font-mono text-[11px]">
-                <span className="text-textmid">{statusMsg || "Running backtest on historical data…"}</span>
-                <span className="text-gold tabular-nums">{Math.round(progress)}%</span>
+          <div className="relative min-h-0 flex-1">
+            {hasData
+              ? <PriceChart candles={candles} trades={trades} idx={idx} />
+              : <div className="flex h-full w-full items-center justify-center px-6 text-center font-mono text-xs text-textdim">
+                  {running ? "Running backtest…" : "Pick a strategy and instrument, then Run backtest. The replay animates bar-by-bar here."}
+                </div>}
+          </div>
+
+          {hasData && (
+            <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2">
+              <button onClick={() => { if (idx >= candles.length) setIdx(0); setPlaying((p) => !p); }} className="h-7 rounded bg-gold px-3 text-xs font-bold text-bg hover:bg-gold2">
+                {playing ? "⏸ Pause" : idx >= candles.length ? "↻ Replay" : "▶ Play"}
+              </button>
+              <div className="flex overflow-hidden rounded border border-border font-mono text-[10px]">
+                {SPEEDS.map(([v, l]) => (
+                  <button key={v} onClick={() => setSpeed(v)} className={`px-2 py-1 ${speed === v ? "bg-gold/15 text-gold" : "text-textdim hover:text-gold"}`}>{l}</button>
+                ))}
               </div>
-              <div className="h-2 w-full overflow-hidden rounded bg-bg3">
-                <div className="h-full rounded bg-gradient-to-r from-gold/70 to-gold transition-all duration-150" style={{ width: `${progress}%` }} />
-              </div>
+              <input type="range" min={0} max={candles.length} value={idx} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="h-1.5 flex-1 accent-gold" />
             </div>
           )}
+        </div>
 
-          {/* Replay controls + live metrics */}
-          {candles.length > 0 && live && (
-            <div className="rounded-md border border-border bg-bg2 p-3">
-              <div className="mb-2 flex flex-wrap items-center gap-3">
-                <button onClick={() => { if (idx >= candles.length) setIdx(0); setPlaying((p) => !p); }} className="rounded bg-gold px-4 py-1.5 text-sm font-bold text-black hover:bg-gold2">
-                  {playing ? "⏸ Pause" : idx >= candles.length ? "↻ Replay" : "▶ Play"}
-                </button>
-                <div className="flex overflow-hidden rounded border border-border font-mono text-[10px]">
-                  {SPEEDS.map(([v, l]) => (
-                    <button key={v} onClick={() => setSpeed(v)} className={`px-2 py-1 ${speed === v ? "bg-gold/15 text-gold" : "text-textmid hover:text-gold"}`}>{l}</button>
-                  ))}
-                </div>
-                <input type="range" min={0} max={candles.length} value={idx} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="flex-1 accent-gold" />
-                <span className="font-mono text-[11px] text-textdim">bar {live.bar}/{live.total}</span>
-              </div>
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-                <Live label="Time" value={live.date} small />
-                <Live label="Equity" value={`£${live.equity.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} />
-                <Live label="Return" value={`${live.ret >= 0 ? "+" : ""}${live.ret.toFixed(2)}%`} tone={live.ret >= 0 ? "up" : "down"} />
-                <Live label="Max DD" value={`${live.maxDD.toFixed(2)}%`} tone="down" />
-                <Live label="Trades" value={String(live.trades)} />
-                <Live label="Win rate" value={`${live.winRate.toFixed(0)}%`} />
-              </div>
-            </div>
-          )}
-
-          <ReplayCharts candles={candles} equity={equity} trades={trades} idx={idx} />
-
-          {/* Final summary (placeholders until the result lands) */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {/* METRICS (always on screen) */}
+        <div className="shrink-0 rounded-md border border-border bg-bg2 p-3">
+          <div className="mb-2 font-mono text-[10px] uppercase tracking-wider text-gold">// Performance</div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-8">
             <Stat label="Total return" value={ready ? pct(result!.total_return_pct) : "—"} tone={ready ? ((result!.total_return_pct ?? 0) >= 0 ? "up" : "down") : undefined} />
             <Stat label="Trades" value={ready ? String(result!.trades ?? 0) : "—"} />
             <Stat label="Win rate" value={ready ? `${result!.win_rate ?? 0}%` : "—"} />
             <Stat label="Profit factor" value={ready ? String(result!.profit_factor ?? 0) : "—"} />
             <Stat label="Avg R:R" value={ready ? String(result!.avg_rr ?? 0) : "—"} />
-            <Stat label="Expectancy/trade" value={ready ? pct(result!.expectancy_pct) : "—"} />
+            <Stat label="Expectancy" value={ready ? pct(result!.expectancy_pct) : "—"} />
             <Stat label="Max daily DD" value={ready ? `${result!.max_daily_dd_pct ?? 0}%` : "—"} tone={ready ? "down" : undefined} />
             <Stat label="Max total DD" value={ready ? `${result!.max_total_dd_pct ?? 0}%` : "—"} tone={ready ? "down" : undefined} />
           </div>
-
           {ready && result!.monte_carlo && Number(result!.monte_carlo.runs ?? 0) > 0 && (
-            <div className="rounded-md border border-border bg-bg2 p-4">
-              <div className="mb-3 font-mono text-[10px] uppercase tracking-wider text-gold">
-                // Monte Carlo ({result!.monte_carlo!.runs} runs · target {result!.monte_carlo!.target_pct}% · ruin {result!.monte_carlo!.total_limit_pct}%)
-              </div>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-                <Stat label="P(pass)" value={`${result!.monte_carlo!.pass_prob_pct}%`} tone="up" />
-                <Stat label="P(breach)" value={`${result!.monte_carlo!.breach_prob_pct}%`} tone="down" />
-                <Stat label="Median ret" value={`${result!.monte_carlo!.median_return_pct}%`} />
-                <Stat label="P5 (bad)" value={`${result!.monte_carlo!.p5_return_pct}%`} />
-                <Stat label="P95 (good)" value={`${result!.monte_carlo!.p95_return_pct}%`} />
-              </div>
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-2 font-mono text-[11px]">
+              <span className="text-[10px] uppercase tracking-wider text-textdim">Monte Carlo ({result!.monte_carlo!.runs} runs)</span>
+              <span className="text-up">P(pass) {result!.monte_carlo!.pass_prob_pct}%</span>
+              <span className="text-down">P(breach) {result!.monte_carlo!.breach_prob_pct}%</span>
+              <span className="text-textmid">median {result!.monte_carlo!.median_return_pct}%</span>
+              <span className="text-textdim">P5 {result!.monte_carlo!.p5_return_pct}% · P95 {result!.monte_carlo!.p95_return_pct}%</span>
             </div>
           )}
-        </>
-      )}
-
-      {!result && !running && (
-        <div className="rounded-md border border-border bg-bg2 p-8 text-center font-mono text-xs text-textdim">
-          Pick an instrument and run a backtest. It replays the strategy bar-by-bar with live equity and metrics.
-          Real IG history when your engine is connected; otherwise simulated.
         </div>
+      </div>
+
+      {/* ── RIGHT: strategy selection / create / edit ────────────────── */}
+      <aside className="flex w-full shrink-0 flex-col gap-3 lg:w-72">
+        <div className="shrink-0 rounded-md border border-border bg-bg2 p-3">
+          <div className="mb-2 font-mono text-[10px] uppercase tracking-wider text-gold">// Algorithm</div>
+          <Select value={strategyName} onChange={setStrategyName} options={strategies.map((s) => [s.name, s.label])} full />
+          <div className="mt-2 flex gap-2">
+            <button
+              onClick={() => setEditor({ name: "", label: "", description: "", kind: "custom", editable: true, code: STARTER })}
+              className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded border border-gold/50 bg-gold/10 text-xs font-bold text-gold transition hover:bg-gold/20"
+            ><span className="text-base leading-none">+</span> Create Custom Strategy</button>
+            {selectedStrategy?.editable && (
+              <button onClick={() => setEditor(selectedStrategy)} className="h-9 rounded border border-border bg-bg3 px-3 text-xs font-bold text-textmid transition hover:text-gold">Edit</button>
+            )}
+          </div>
+          {selectedStrategy?.description && (
+            <p className="mt-3 text-[11px] leading-snug text-textdim">{selectedStrategy.description}</p>
+          )}
+          {selectedStrategy && selectedStrategy.kind !== "builtin" && (
+            <div className="mt-2 inline-flex items-center gap-1 rounded bg-gold/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-gold">
+              {selectedStrategy.kind} strategy
+            </div>
+          )}
+        </div>
+
+        {/* Equity curve + run summary fills the rest of the sidebar */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-bg2">
+          <div className="border-b border-border px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-gold">// Equity curve</div>
+          <div className="relative min-h-[140px] flex-1">
+            {hasData
+              ? <EquityChart equity={equity} candles={candles} idx={idx} startEq={startEq} />
+              : <div className="flex h-full items-center justify-center px-4 text-center font-mono text-[11px] text-textdim">Equity grows here as the replay runs.</div>}
+          </div>
+          {source === "local" && (
+            <div className="border-t border-border px-3 py-2 font-mono text-[9px] leading-snug text-textdim">
+              Offline · daily 2006→2026 · US500/FTSE100/EURUSD · vars: fear&amp;greed, VIX, sentiment.
+            </div>
+          )}
+        </div>
+      </aside>
+
+      {editor && (
+        <StrategyEditor
+          initial={editor}
+          onClose={() => setEditor(null)}
+          onSaved={onSavedStrategy}
+          onDelete={onDeleteStrategy}
+        />
       )}
     </div>
   );
 }
 
-/** Candle chart + equity area that reveal up to `idx`. */
-function ReplayCharts({ candles, equity, trades, idx }: { candles: Candle[]; equity: EqPoint[]; trades: Trade[]; idx: number }) {
-  const priceRef = useRef<HTMLDivElement>(null);
-  const eqRef = useRef<HTMLDivElement>(null);
-  const priceChart = useRef<any>(null);
-  const candleSeries = useRef<any>(null);
-  const eqChart = useRef<any>(null);
-  const eqSeries = useRef<any>(null);
+/** Hero candlestick chart with trade markers, revealed up to `idx`. */
+function PriceChart({ candles, trades, idx }: { candles: Candle[]; trades: Trade[]; idx: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const chart = useRef<any>(null);
+  const series = useRef<any>(null);
 
   useEffect(() => {
     let disposed = false;
     (async () => {
       const lib = await import("lightweight-charts");
-      const base = { layout: { background: { color: "#0a0a0a" }, textColor: "#999" }, grid: { vertLines: { color: "#161616" }, horzLines: { color: "#161616" } }, timeScale: { timeVisible: true, borderColor: "#222" }, rightPriceScale: { borderColor: "#222" }, autoSize: true } as any;
-      if (!disposed && priceRef.current) {
-        const c = lib.createChart(priceRef.current, base);
-        candleSeries.current = c.addCandlestickSeries({ upColor: "#22c55e", downColor: "#ef4444", borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444" });
-        priceChart.current = c;
-      }
-      if (!disposed && eqRef.current) {
-        const c = lib.createChart(eqRef.current, base);
-        eqSeries.current = c.addAreaSeries({ lineColor: "#c9a84c", topColor: "rgba(201,168,76,0.25)", bottomColor: "rgba(201,168,76,0.02)", lineWidth: 2 });
-        eqChart.current = c;
-      }
+      const c = chartColors();
+      if (disposed || !ref.current) return;
+      const ch = lib.createChart(ref.current, {
+        layout: { background: { color: c.bg }, textColor: c.text },
+        grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
+        timeScale: { timeVisible: true, borderColor: c.border },
+        rightPriceScale: { borderColor: c.border },
+        autoSize: true,
+      } as any);
+      series.current = ch.addCandlestickSeries({ upColor: "#22c55e", downColor: "#ef4444", borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444" });
+      chart.current = ch;
     })();
-    return () => { disposed = true; priceChart.current?.remove(); eqChart.current?.remove(); priceChart.current = eqChart.current = candleSeries.current = eqSeries.current = null; };
+    return () => { disposed = true; chart.current?.remove(); chart.current = series.current = null; };
   }, []);
 
   useEffect(() => {
-    const cs = candleSeries.current, es = eqSeries.current;
-    if (!cs || !es) return;
-    const dedupe = <T extends { time: number }>(rows: T[]) => { const seen = new Set<number>(); return [...rows].sort((a, b) => a.time - b.time).filter((r) => (seen.has(r.time) ? false : (seen.add(r.time), true))); };
-    const shownC = dedupe(candles.slice(0, Math.max(1, idx)));
-    cs.setData(shownC);
-    const cut = shownC.length ? shownC[shownC.length - 1].time : 0;
-    es.setData(dedupe(equity.filter((p) => p.time <= cut)).map((p) => ({ time: p.time, value: p.equity })));
-    // trade markers up to cut
+    const s = series.current;
+    if (!s) return;
+    const seen = new Set<number>();
+    const shown = [...candles.slice(0, Math.max(1, idx))].sort((a, b) => a.time - b.time).filter((r) => (seen.has(r.time) ? false : (seen.add(r.time), true)));
+    s.setData(shown);
+    const cut = shown.length ? shown[shown.length - 1].time : 0;
     const markers = trades
       .filter((t) => new Date(t.closed).getTime() / 1000 <= cut)
       .map((t) => ({ time: Math.floor(new Date(t.closed).getTime() / 1000), position: t.pnl >= 0 ? "belowBar" : "aboveBar", color: t.pnl >= 0 ? "#22c55e" : "#ef4444", shape: t.pnl >= 0 ? "arrowUp" : "arrowDown", text: `${t.pnl >= 0 ? "+" : ""}${t.pnl}` }));
-    try { cs.setMarkers(markers as any); } catch { /* ignore */ }
-  }, [idx, candles, equity, trades]);
+    try { s.setMarkers(markers as any); } catch { /* ignore */ }
+  }, [idx, candles, trades]);
 
-  return (
-    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-      <div className="rounded-md border border-border bg-bg2">
-        <div className="border-b border-border px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-gold">// Price (with trade markers)</div>
-        <div ref={priceRef} className="h-[280px] w-full" />
-      </div>
-      <div className="rounded-md border border-border bg-bg2">
-        <div className="border-b border-border px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-gold">// Equity curve</div>
-        <div ref={eqRef} className="h-[280px] w-full" />
-      </div>
-    </div>
-  );
+  return <div ref={ref} className="absolute inset-0" />;
+}
+
+/** Compact equity area chart, revealed up to the same `idx` cut time. */
+function EquityChart({ equity, candles, idx, startEq }: { equity: EqPoint[]; candles: Candle[]; idx: number; startEq: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const chart = useRef<any>(null);
+  const series = useRef<any>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    (async () => {
+      const lib = await import("lightweight-charts");
+      const c = chartColors();
+      if (disposed || !ref.current) return;
+      const ch = lib.createChart(ref.current, {
+        layout: { background: { color: c.bg }, textColor: c.text },
+        grid: { vertLines: { color: "transparent" }, horzLines: { color: c.grid } },
+        timeScale: { timeVisible: false, borderColor: c.border },
+        rightPriceScale: { borderColor: c.border },
+        autoSize: true,
+      } as any);
+      series.current = ch.addAreaSeries({ lineColor: "#c9a84c", topColor: "rgba(201,168,76,0.25)", bottomColor: "rgba(201,168,76,0.02)", lineWidth: 2 });
+      chart.current = ch;
+    })();
+    return () => { disposed = true; chart.current?.remove(); chart.current = series.current = null; };
+  }, []);
+
+  useEffect(() => {
+    const s = series.current;
+    if (!s) return;
+    const cut = candles[Math.max(0, Math.min(idx, candles.length) - 1)]?.time ?? 0;
+    const seen = new Set<number>();
+    const pts = [...equity.filter((p) => p.time <= cut)].sort((a, b) => a.time - b.time)
+      .filter((p) => (seen.has(p.time) ? false : (seen.add(p.time), true)))
+      .map((p) => ({ time: p.time, value: p.equity }));
+    s.setData(pts.length ? pts : [{ time: Math.floor(Date.now() / 1000), value: startEq }]);
+  }, [idx, equity, candles, startEq]);
+
+  return <div ref={ref} className="absolute inset-0" />;
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────
@@ -430,15 +475,15 @@ function pct(v?: number) { return `${(v ?? 0) >= 0 ? "+" : ""}${v ?? 0}%`; }
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <div><div className="mb-1 font-mono text-[9px] uppercase tracking-wider text-textdim">{label}</div>{children}</div>;
 }
-function Select({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: [string, string][] }) {
-  return <select value={value} onChange={(e) => onChange(e.target.value)} className="rounded border border-border bg-bg3 px-3 py-2 text-sm outline-none focus:border-gold">{options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>;
+function Select({ value, onChange, options, full }: { value: string; onChange: (v: string) => void; options: [string, string][]; full?: boolean }) {
+  return <select value={value} onChange={(e) => onChange(e.target.value)} className={`h-9 rounded border border-border bg-bg3 px-3 text-sm outline-none focus:border-gold ${full ? "w-full" : ""}`}>{options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>;
 }
 function NumberInput({ value, onChange, step }: { value: number; onChange: (v: number) => void; step: number }) {
-  return <input type="number" step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} className="w-24 rounded border border-border bg-bg3 px-3 py-2 text-sm outline-none focus:border-gold" />;
+  return <input type="number" step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-9 w-24 rounded border border-border bg-bg3 px-3 text-sm outline-none focus:border-gold" />;
 }
 function Stat({ label, value, tone }: { label: string; value: string; tone?: "up" | "down" }) {
-  return <div className="rounded border border-border bg-bg3 px-3 py-2"><div className="font-mono text-[9px] uppercase tracking-wider text-textdim">{label}</div><div className={`mt-0.5 text-lg font-bold ${tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-gold"}`}>{value}</div></div>;
+  return <div className="rounded border border-border bg-bg3 px-3 py-2"><div className="font-mono text-[9px] uppercase tracking-wider text-textdim">{label}</div><div className={`mt-0.5 text-base font-bold ${tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-gold"}`}>{value}</div></div>;
 }
-function Live({ label, value, tone, small }: { label: string; value: string; tone?: "up" | "down"; small?: boolean }) {
-  return <div className="rounded border border-border bg-bg3 px-2 py-1.5"><div className="font-mono text-[8px] uppercase tracking-wider text-textdim">{label}</div><div className={`mt-0.5 font-bold ${small ? "text-[10px]" : "text-sm"} ${tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-textmid"}`}>{value}</div></div>;
+function Chip({ label, value, tone }: { label: string; value: string; tone?: "up" | "down" }) {
+  return <span className="flex items-center gap-1"><span className="text-textdim">{label}</span><span className={tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-textmid"}>{value}</span></span>;
 }
