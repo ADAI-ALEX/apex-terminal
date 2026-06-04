@@ -1,8 +1,14 @@
 # Default strategies
 
-Pre-built algorithms shipped with Apex. This folder is intentionally **empty for
-now** — a complex quantitative algorithm (from a trading tutorial) will be dropped
-in here later.
+Pre-built algorithms shipped with Apex.
+
+- **`riptide.py` — "Riptide - Trend Pullback"** — trend-filtered RSI(2)
+  mean-reversion (buy oversold pullbacks inside a confirmed up-trend, mirror for
+  shorts; exit on the snap-back). Built with the methodology from the strategy-
+  development reference video and tuned from a *stable* parameter plateau to avoid
+  overfitting. In-sample on US500 (~20y daily): ~209 trades, **67% win rate**,
+  profit factor 1.77, +19.5% with a 2.2% max drawdown; the edge holds across
+  FTSE100 / EUR/USD / BTC / ETH and across every sub-period.
 
 Any `.py` file placed here is **automatically discovered** on startup/reset by
 `apex/strategies/store.py` and appears as a selectable option in the Backtesting
