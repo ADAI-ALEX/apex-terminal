@@ -147,7 +147,13 @@ export function BacktestTab() {
       </div>
 
       {editor && (
-        <StrategyEditor initial={editor} onClose={() => setEditor(null)} onSaved={onSavedStrategy} onDelete={onDeleteStrategy} />
+        <StrategyEditor
+          initial={editor}
+          existingNames={strategies.map((s) => s.name)}
+          onClose={() => setEditor(null)}
+          onSaved={onSavedStrategy}
+          onDelete={onDeleteStrategy}
+        />
       )}
     </div>
   );
@@ -394,6 +400,7 @@ function SingleBacktest({
 
 // ── Compare view ────────────────────────────────────────────────────────
 type CompareSeries = { name: string; label: string; color: string; points: { time: number; value: number }[]; finalPct: number; trades: number; error?: string };
+type CompareRun = { candles: Candle[]; series: CompareSeries[] };
 
 function CompareView({ strategies }: { strategies: Strategy[] }) {
   const [market, setMarket] = useState("US500");
@@ -403,7 +410,11 @@ function CompareView({ strategies }: { strategies: Strategy[] }) {
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState("");
   const [offlineWarn, setOfflineWarn] = useState("");
-  const [series, setSeries] = useState<CompareSeries[]>([]);
+  const [run, setRun] = useState<CompareRun | null>(null);
+  const [showPrice, setShowPrice] = useState(true);
+  const [idx, setIdx] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(8);
   const initialized = useRef(false);
 
   // Seed the selection once (book + any custom/default strategies, capped). A ref
@@ -418,12 +429,16 @@ function CompareView({ strategies }: { strategies: Strategy[] }) {
     setSelected((prev) => (prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]));
   }
 
-  async function run() {
+  // Run every selected strategy (sequentially — they share the backtest relay),
+  // collect candles + each equity curve, THEN replay them together so the curves
+  // animate in lock-step rather than popping in one-by-one.
+  async function doRun() {
     setOfflineWarn("");
     if (!(await checkOnline())) { setOfflineWarn("You appear to be offline. A working internet connection is required to run a comparison."); return; }
     if (!selected.length) return;
-    setRunning(true); setSeries([]);
+    setRunning(true); setRun(null); setPlaying(false); setIdx(0);
     const out: CompareSeries[] = [];
+    let candles: Candle[] = [];
     let i = 0;
     for (const name of selected) {
       const meta = strategies.find((s) => s.name === name);
@@ -434,17 +449,41 @@ function CompareView({ strategies }: { strategies: Strategy[] }) {
       if (r.error || !r.equity_curve?.length) {
         out.push({ name, label, color, points: [], finalPct: 0, trades: 0, error: r.error ?? "no data" });
       } else {
+        if (!candles.length && r.candles?.length) candles = r.candles;
         const startEq = r.starting_equity ?? 100_000;
         const points = r.equity_curve.map((p) => ({ time: p.time, value: (100 * (p.equity - startEq)) / startEq }));
         out.push({ name, label, color, points, finalPct: points[points.length - 1]?.value ?? 0, trades: r.trades ?? 0 });
       }
       i++;
-      setSeries([...out]); // progressive: curves appear as each finishes
     }
     setRunning(false); setStatus("");
+    setRun({ candles, series: out });
+    if (candles.length) { setIdx(0); setPlaying(true); }
   }
 
-  const ranked = useMemo(() => [...series].sort((a, b) => b.finalPct - a.finalPct), [series]);
+  const candles = run?.candles ?? [];
+  const drawSeries = useMemo(() => (run?.series ?? []).filter((s) => s.points.length), [run]);
+  const hasData = candles.length > 0 && drawSeries.length > 0;
+
+  // Replay ticker (shared cadence with the single backtest).
+  useEffect(() => {
+    if (!playing || candles.length === 0) return;
+    const id = setInterval(() => setIdx((j) => { const next = j + speed; if (next >= candles.length) { setPlaying(false); return candles.length; } return next; }), 80);
+    return () => clearInterval(id);
+  }, [playing, speed, candles.length]);
+
+  // Leaderboard reflects each algorithm's value at the current replay bar.
+  const ranked = useMemo(() => {
+    if (!run) return [];
+    const cut = candles[Math.max(0, Math.min(idx, candles.length) - 1)]?.time ?? Infinity;
+    return run.series.map((s) => {
+      let cur = 0;
+      for (const p of s.points) { if (p.time <= cut) cur = p.value; else break; }
+      return { ...s, cur };
+    }).sort((a, b) => b.cur - a.cur);
+  }, [run, idx, candles]);
+
+  const replayDate = candles[Math.max(0, Math.min(idx, candles.length) - 1)]?.time;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 lg:flex-row">
@@ -454,24 +493,44 @@ function CompareView({ strategies }: { strategies: Strategy[] }) {
             <Field label="Instrument"><Select value={market} onChange={setMarket} options={[...LOCAL_MARKETS].map((mk) => [mk, mk])} /></Field>
             <Field label="Bars"><NumberInput value={bars} onChange={setBars} step={250} /></Field>
             <Field label="Risk %/trade"><NumberInput value={riskPct} onChange={setRiskPct} step={0.1} /></Field>
-            <button onClick={run} disabled={running || !selected.length} className="btn-gold h-9 rounded px-6 text-sm font-bold">{running ? "Running…" : "Run comparison"}</button>
+            <button onClick={doRun} disabled={running || !selected.length} className="btn-gold h-9 rounded px-6 text-sm font-bold">{running ? "Running…" : "Run comparison"}</button>
             {status && <span className="font-mono text-xs text-textmid">{status}</span>}
           </div>
           {offlineWarn && <div className="mt-2 rounded border border-down/50 bg-down/10 px-3 py-2 text-xs text-down">⚠ {offlineWarn}</div>}
-          <div className="mt-1 font-mono text-[10px] text-textdim">Offline · daily 2006→2026 · normalised to % return from start.</div>
+          <div className="mt-1 font-mono text-[10px] text-textdim">Offline · daily 2006→2026 · equity normalised to % return from start.</div>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-bg2">
-          <div className="border-b border-border px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-gold">// Equity growth — {market}</div>
-          <div className="relative min-h-0 flex-1">
-            {series.length
-              ? <CompareChart series={series} />
-              : <div className="flex h-full items-center justify-center px-6 text-center font-mono text-xs text-textdim">Select algorithms on the right, then Run comparison to overlay their equity curves.</div>}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-2">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-gold">// Equity race — {market}</span>
+            {hasData && replayDate && <span className="font-mono text-[10px] text-textdim">@ {new Date(replayDate * 1000).toLocaleDateString()}</span>}
+            {/* top-right: toggle the instrument's live price candles on/off */}
+            <label className="ml-auto flex cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] text-textmid">
+              <input type="checkbox" checked={showPrice} onChange={(e) => setShowPrice(e.target.checked)} className="range-gold h-3 w-3" />
+              Show price
+            </label>
           </div>
+          <div className="relative min-h-0 flex-1">
+            {hasData
+              ? <CompareReplayChart candles={candles} series={drawSeries} idx={idx} showPrice={showPrice} />
+              : <div className="flex h-full items-center justify-center px-6 text-center font-mono text-xs text-textdim">{running ? "Running each algorithm…" : "Select algorithms on the right, then Run comparison to race their equity curves on a live replay."}</div>}
+          </div>
+          {hasData && (
+            <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2">
+              <button onClick={() => { if (idx >= candles.length) setIdx(0); setPlaying((p) => !p); }} className="btn-gold h-7 rounded px-3 text-xs font-bold">
+                {playing ? "⏸ Pause" : idx >= candles.length ? "↻ Replay" : "▶ Play"}
+              </button>
+              <div className="flex overflow-hidden rounded border border-border font-mono text-[10px]">
+                {SPEEDS.map(([v, l]) => (<button key={v} onClick={() => setSpeed(v)} className={`px-2 py-1 ${speed === v ? "bg-gold/15 text-gold" : "text-textdim hover:text-gold"}`}>{l}</button>))}
+              </div>
+              <input type="range" min={0} max={candles.length} value={idx} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="range-gold h-1.5 flex-1" />
+              <span className="font-mono text-[11px] text-textdim">bar {Math.min(idx, candles.length)}/{candles.length}</span>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* RIGHT: selection + ranked results */}
+      {/* RIGHT: selection + live leaderboard */}
       <aside className="flex w-full shrink-0 flex-col gap-3 lg:w-72">
         <div className="shrink-0 rounded-md border border-border bg-bg2 p-3">
           <div className="mb-2 font-mono text-[10px] uppercase tracking-wider text-gold">// Algorithms ({selected.length})</div>
@@ -492,7 +551,7 @@ function CompareView({ strategies }: { strategies: Strategy[] }) {
           <div className="border-b border-border px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-gold">// Leaderboard</div>
           <div className="min-h-0 flex-1 overflow-y-auto p-2">
             {ranked.length === 0
-              ? <div className="px-2 py-4 text-center font-mono text-[11px] text-textdim">Run a comparison to rank algorithms by return.</div>
+              ? <div className="px-2 py-4 text-center font-mono text-[11px] text-textdim">Run a comparison to race algorithms by return.</div>
               : ranked.map((s, i) => (
                 <div key={s.name} className="flex items-center gap-2 rounded px-2 py-1.5">
                   <span className="w-4 font-mono text-[11px] text-textdim">{i + 1}</span>
@@ -500,7 +559,7 @@ function CompareView({ strategies }: { strategies: Strategy[] }) {
                   <span className="min-w-0 flex-1 truncate text-[12px] text-textmid">{s.label}</span>
                   {s.error
                     ? <span className="font-mono text-[10px] text-down">err</span>
-                    : <span className={`font-mono text-[12px] font-bold ${s.finalPct >= 0 ? "text-up" : "text-down"}`}>{s.finalPct >= 0 ? "+" : ""}{s.finalPct.toFixed(1)}%</span>}
+                    : <span className={`font-mono text-[12px] font-bold ${s.cur >= 0 ? "text-up" : "text-down"}`}>{s.cur >= 0 ? "+" : ""}{s.cur.toFixed(1)}%</span>}
                 </div>
               ))}
           </div>
@@ -510,59 +569,94 @@ function CompareView({ strategies }: { strategies: Strategy[] }) {
   );
 }
 
-/** Multi-series equity comparison with a labelled bubble at the end of each curve. */
-function CompareChart({ series }: { series: CompareSeries[] }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const chart = useRef<any>(null);
-  const cleanup = useRef<(() => void) | null>(null);
+/** Synchronised replay: instrument price candles (right scale, toggleable) +
+    every algorithm's equity curve (left scale, % return), revealed up to `idx`,
+    with a live bubble at the tip of each curve. */
+function CompareReplayChart({ candles, series, idx, showPrice }: { candles: Candle[]; series: CompareSeries[]; idx: number; showPrice: boolean }) {
+  const elRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<any>(null);
+  const candleRef = useRef<any>(null);
+  const tsRef = useRef<any>(null);
+  const linesRef = useRef<{ ls: any; s: CompareSeries; pts: { time: number; value: number }[] }[]>([]);
+  const cutRef = useRef<number>(0);
+  const placeRef = useRef<() => void>(() => {});
+  const drawRef = useRef<() => void>(() => {});
+  const viewRef = useRef({ idx, showPrice });
+  const cleanupRef = useRef<(() => void) | null>(null);
   const [labels, setLabels] = useState<{ x: number; y: number; text: string; up: boolean; color: string }[]>([]);
 
+  // (Re)build the chart whenever the run data changes.
   useEffect(() => {
     let disposed = false;
+    let ro: ResizeObserver | null = null;
     (async () => {
       const lib = await import("lightweight-charts");
       const c = chartColors();
-      if (disposed || !ref.current) return;
-      const ch = lib.createChart(ref.current, {
+      if (disposed || !elRef.current) return;
+      const ch = lib.createChart(elRef.current, {
         layout: { background: { color: c.bg }, textColor: c.text },
         grid: { vertLines: { color: "transparent" }, horzLines: { color: c.grid } },
         timeScale: { timeVisible: false, borderColor: c.border },
-        rightPriceScale: { borderColor: c.border, scaleMargins: { top: 0.12, bottom: 0.08 } },
+        rightPriceScale: { borderColor: c.border, visible: true },
+        leftPriceScale: { borderColor: c.border, visible: true, scaleMargins: { top: 0.12, bottom: 0.08 } },
         autoSize: true,
       } as any);
-      chart.current = ch;
-      const drawn = series.filter((s) => s.points.length).map((s) => {
-        const ls = ch.addLineSeries({ color: s.color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+      chartRef.current = ch; tsRef.current = ch.timeScale();
+      candleRef.current = ch.addCandlestickSeries({ priceScaleId: "right", upColor: "#22c55e", downColor: "#ef4444", borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444" });
+      linesRef.current = series.map((s) => {
+        const ls = ch.addLineSeries({ priceScaleId: "left", color: s.color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
         const seen = new Set<number>();
-        const data = [...s.points].sort((a, b) => a.time - b.time).filter((p) => (seen.has(p.time) ? false : (seen.add(p.time), true))).map((p) => ({ time: p.time as any, value: p.value }));
-        ls.setData(data);
-        return { ls, s, lastTime: data[data.length - 1].time, lastVal: data[data.length - 1].value };
+        const pts = [...s.points].sort((a, b) => a.time - b.time).filter((p) => (seen.has(p.time) ? false : (seen.add(p.time), true)));
+        return { ls, s, pts };
       });
-      ch.timeScale().fitContent();
-      const place = () => {
-        if (disposed) return;
-        const ts = ch.timeScale();
-        const next = drawn.map(({ ls, s, lastTime, lastVal }) => {
-          const x = ts.timeToCoordinate(lastTime);
-          const y = ls.priceToCoordinate(lastVal);
+
+      placeRef.current = () => {
+        if (disposed || !tsRef.current) return;
+        const ts = tsRef.current, cut = cutRef.current;
+        const next = linesRef.current.map(({ ls, s, pts }) => {
+          let last: { time: number; value: number } | null = null;
+          for (const p of pts) { if (p.time <= cut) last = p; else break; }
+          if (!last) return null;
+          const x = ts.timeToCoordinate(last.time as any);
+          const y = ls.priceToCoordinate(last.value);
           if (x == null || y == null) return null;
-          return { x: x as number, y: y as number, text: `${s.label}  ${lastVal >= 0 ? "+" : ""}${lastVal.toFixed(1)}%`, up: lastVal >= 0, color: s.color };
+          return { x: x as number, y: y as number, text: `${s.label}  ${last.value >= 0 ? "+" : ""}${last.value.toFixed(1)}%`, up: last.value >= 0, color: s.color };
         }).filter(Boolean) as { x: number; y: number; text: string; up: boolean; color: string }[];
         setLabels(next);
       };
-      place();
-      const sub = () => place();
+
+      drawRef.current = () => {
+        if (disposed || !candleRef.current) return;
+        const { idx: vi, showPrice: sp } = viewRef.current;
+        const cut = candles[Math.max(0, Math.min(vi, candles.length) - 1)]?.time ?? 0;
+        cutRef.current = cut;
+        candleRef.current.applyOptions({ visible: sp });
+        try { ch.priceScale("right").applyOptions({ visible: sp }); } catch {}
+        if (sp) {
+          const seen = new Set<number>();
+          const shown = [...candles.slice(0, Math.max(1, vi))].sort((a, b) => a.time - b.time).filter((r) => (seen.has(r.time) ? false : (seen.add(r.time), true)));
+          candleRef.current.setData(shown);
+        }
+        for (const { ls, pts } of linesRef.current) ls.setData(pts.filter((p) => p.time <= cut));
+        placeRef.current();
+      };
+
+      const sub = () => placeRef.current();
       ch.timeScale().subscribeVisibleTimeRangeChange(sub);
-      const ro = new ResizeObserver(() => place());
-      ro.observe(ref.current);
-      cleanup.current = () => { try { ch.timeScale().unsubscribeVisibleTimeRangeChange(sub); } catch {} ro.disconnect(); };
+      ro = new ResizeObserver(() => placeRef.current());
+      ro.observe(elRef.current);
+      cleanupRef.current = () => { try { ch.timeScale().unsubscribeVisibleTimeRangeChange(sub); } catch {} ro?.disconnect(); };
+      drawRef.current(); // initial paint
     })();
-    return () => { disposed = true; cleanup.current?.(); cleanup.current = null; chart.current?.remove(); chart.current = null; };
-  }, [series]);
+    return () => { disposed = true; cleanupRef.current?.(); cleanupRef.current = null; chartRef.current?.remove(); chartRef.current = candleRef.current = tsRef.current = null; linesRef.current = []; };
+  }, [candles, series]);
+
+  // Reveal up to the current bar / toggle price without rebuilding the chart.
+  useEffect(() => { viewRef.current = { idx, showPrice }; drawRef.current(); }, [idx, showPrice]);
 
   return (
     <div className="absolute inset-0">
-      <div ref={ref} className="absolute inset-0" />
+      <div ref={elRef} className="absolute inset-0" />
       {labels.map((l, i) => (
         <div
           key={i}

@@ -43,27 +43,19 @@ body {
   font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
 }
 
-/* ── Primary gold controls (theme-aware: a clean amber in light mode instead
-   of the murky olive the dark-mode gold becomes on a white surface) ── */
+/* ── Primary gold controls — one clean solid gold in BOTH themes (a gold
+   button with dark text reads well on a dark or light page) ── */
 .btn-gold {
-  background: rgb(var(--c-gold));
-  color: rgb(var(--c-bg));
-  transition: background 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+  background: #c9a84c;
+  color: #0f0f0f;
+  transition: background 0.15s ease;
 }
-.btn-gold:hover { background: rgb(var(--c-gold2)); }
+.btn-gold:hover { background: #e0bd63; }
 .btn-gold:disabled { opacity: 0.5; }
-.theme-light .btn-gold {
-  background: linear-gradient(180deg, #eab234 0%, #d9981f 100%);
-  color: #2b2207;
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.35);
-}
-.theme-light .btn-gold:hover { background: linear-gradient(180deg, #f4be41 0%, #e4a426 100%); }
 
-.range-gold { accent-color: rgb(var(--c-gold)); }
-.theme-light .range-gold { accent-color: #d9981f; }
+.range-gold { accent-color: #c9a84c; }
 
-.fill-gold-grad { background: linear-gradient(90deg, rgb(var(--c-gold) / 0.7), rgb(var(--c-gold))); }
-.theme-light .fill-gold-grad { background: linear-gradient(90deg, #eab234, #d9981f); }
+.fill-gold-grad { background: #c9a84c; }
 
 /* The terminal itself is fixed (h-screen overflow-hidden on its own root); other
    pages (settings, login) scroll normally, so we don't force overflow globally. */

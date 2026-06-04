@@ -410,6 +410,7 @@ export function Terminal() {
   };
   const switchSpace = (i: number) => {
     if (!store.current) return;
+    setView("terminal");   // workspaces live on the terminal canvas — show it
     saveCurrent();
     activeRef.current = i;
     setActive(i);
@@ -418,6 +419,7 @@ export function Terminal() {
   };
   const addSpace = () => {
     if (!store.current) return;
+    setView("terminal");
     saveCurrent();
     store.current.spaces.push({ name: `WS ${store.current.spaces.length + 1}`, nodes: [], dock: { ...DEFAULT_DOCK } });
     const i = store.current.spaces.length - 1;
@@ -436,25 +438,31 @@ export function Terminal() {
     saveStore();
   };
   const doClear = () => { setNodes([]); setDock({ ...DEFAULT_DOCK }); };
+  // Reset ONLY the active workspace back to the default widget layout (fresh ids),
+  // leaving every other workspace untouched. The persist effect saves it.
   const doReset = () => {
-    const p = defaultSpaces();
-    store.current = p; activeRef.current = 0; setActive(0);
-    setSpaceNames(p.spaces.map((s) => s.name)); setNodes(p.spaces[0].nodes); setDock({ ...DEFAULT_DOCK });
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(p)); } catch { /* ignore */ }
+    setNodes(defaultSpaces().spaces[0].nodes);
+    setDock({ ...DEFAULT_DOCK });
   };
   // In-app confirmation (matches the Sign-out dialog) instead of the browser confirm().
-  const clearSpace = () => setConfirmDlg({
-    title: "Clear workspace?",
-    message: "This removes every widget and docked panel in the current workspace.",
-    confirmLabel: "Clear",
-    onConfirm: doClear,
-  });
-  const resetAll = () => setConfirmDlg({
-    title: "Reset all workspaces?",
-    message: "This restores every workspace to the default layout. Your custom layouts will be lost.",
-    confirmLabel: "Reset",
-    onConfirm: doReset,
-  });
+  const clearSpace = () => {
+    setView("terminal");
+    setConfirmDlg({
+      title: "Clear workspace?",
+      message: "This removes every widget and docked panel in the current workspace.",
+      confirmLabel: "Clear",
+      onConfirm: doClear,
+    });
+  };
+  const resetAll = () => {
+    setView("terminal");
+    setConfirmDlg({
+      title: "Reset workspace?",
+      message: "This restores the current workspace to its default widget layout. Your other workspaces are unaffected.",
+      confirmLabel: "Reset",
+      onConfirm: doReset,
+    });
+  };
 
   const catalog = useMemo(() => {
     const q = query.trim().toLowerCase();
