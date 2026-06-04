@@ -52,8 +52,8 @@ def run_request(
             return {"error": f"Unknown strategy '{strat_name}'."}
         is_custom = strat.kind in ("custom", "default")
 
-        minutes = int(req.get("minutes", settings.heartbeat.candle_minutes_default))
-        bars = max(80, min(int(req.get("bars", 500)), 6000))
+        minutes = int(req.get("minutes", 1440))
+        bars = max(80, min(int(req.get("bars", 1000)), 20000))
 
         # Local/offline is the source for custom strategies and when asked for.
         use_local = str(req.get("source", "")).lower() == "local" or is_custom
@@ -62,18 +62,22 @@ def run_request(
         if use_local:
             from apex.backtest import dataset
 
-            if not dataset.has_local(key):
-                avail = ", ".join(dataset.available()) or "none"
-                return {"error": (
-                    f"No local history for {key}. Offline backtests are available for: "
-                    f"{avail}. Run scripts/seed_historical.py to add more, or switch the "
-                    f"data source to Live."
-                )}
-            series = dataset.load(key, bars)
+            tf = dataset.suffix_for(minutes)
+            if not dataset.has_local(key, tf):
+                # fall back to daily if the requested intraday timeframe isn't seeded
+                if dataset.has_local(key, "D1"):
+                    tf, minutes = "D1", 1440
+                else:
+                    avail = ", ".join(dataset.available()) or "none"
+                    return {"error": (
+                        f"No local history for {key}. Offline backtests are available for: "
+                        f"{avail}. Run scripts/seed_historical.py to add more, or switch the "
+                        f"data source to Live."
+                    )}
+            series = dataset.load(key, bars, timeframe=tf)
             candles = series.candles
             exo = series.exo
-            minutes = 1440  # local store is daily (D1)
-            source = "local"
+            source = f"local {tf}"
         else:
             candles, source = _live_candles(broker, settings, key, market.epic, minutes, bars, history)
             if isinstance(candles, dict):  # an error payload bubbled up

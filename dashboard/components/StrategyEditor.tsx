@@ -145,6 +145,9 @@ export function StrategyEditor({
   const [findOpen, setFindOpen] = useState(false);
   const [findText, setFindText] = useState("");
   const findRef = useRef<HTMLInputElement>(null);
+  // Only close on a click that BOTH starts and ends on the backdrop — so dragging
+  // (e.g. selecting text) out onto the backdrop never closes the editor.
+  const downOnBackdrop = useRef(false);
 
   const slug = isNew ? slugify(label) : initial.name;
   const valid = label.trim().length > 0 && slugValid(slug);
@@ -262,7 +265,11 @@ export function StrategyEditor({
   }, [code, changeCode, undo, redo, doSave, label, findOpen]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 sm:p-6" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 sm:p-6"
+      onMouseDown={(e) => { downOnBackdrop.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (downOnBackdrop.current && e.target === e.currentTarget) onClose(); downOnBackdrop.current = false; }}
+    >
       <div
         className="flex h-full max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-bg2 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
