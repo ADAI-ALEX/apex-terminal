@@ -17,7 +17,8 @@ type Result = {
 };
 
 const MARKETS = ["US500", "NAS100", "EURUSD", "GBPUSD", "FTSE100", "DAX40"];
-const LOCAL_MARKETS = new Set(["US500", "FTSE100", "EURUSD"]); // have 20y offline data
+const LOCAL_INSTRUMENTS = ["US500", "FTSE100", "EURUSD", "BTCUSD", "ETHUSD"]; // local offline data
+const LOCAL_MARKETS = new Set(LOCAL_INSTRUMENTS);
 const TIMEFRAMES: [number, string][] = [[5, "5m"], [15, "15m"], [30, "30m"], [60, "1h"]];
 const SPEEDS: [number, string][] = [[1, "1×"], [3, "3×"], [8, "8×"], [20, "20×"]];
 const PALETTE = ["#c9a84c", "#22c55e", "#3b82f6", "#ef4444", "#a855f7", "#14b8a6", "#f97316", "#ec4899"];
@@ -167,7 +168,7 @@ function SingleBacktest({
 }) {
   const [market, setMarket] = useState("US500");
   const [minutes, setMinutes] = useState(15);
-  const [bars, setBars] = useState(1500);
+  const [bars, setBars] = useState(1000);
   const [riskPct, setRiskPct] = useState(0.4);
   const [source, setSource] = useState<"local" | "live">("local");
   const [running, setRunning] = useState(false);
@@ -188,6 +189,8 @@ function SingleBacktest({
 
   const selectedStrategy = useMemo(() => strategies.find((s) => s.name === strategyName) ?? null, [strategies, strategyName]);
   useEffect(() => { if (selectedStrategy && selectedStrategy.kind !== "builtin") setSource("local"); }, [selectedStrategy]);
+  // Crypto is local-only; if the user switches to Live data, fall back to a live instrument.
+  useEffect(() => { if (source === "live" && !MARKETS.includes(market)) setMarket("US500"); }, [source, market]);
 
   async function run() {
     setOfflineWarn(""); setStatusMsg("Checking connection…");
@@ -260,7 +263,7 @@ function SingleBacktest({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
         <div className="shrink-0 rounded-md border border-border bg-bg2 p-3">
           <div className="flex flex-wrap items-end gap-3">
-            <Field label="Instrument"><Select value={market} onChange={setMarket} options={MARKETS.map((mk) => [mk, source === "local" && !LOCAL_MARKETS.has(mk) ? `${mk} (no local)` : mk])} /></Field>
+            <Field label="Instrument"><Select value={market} onChange={setMarket} options={(source === "local" ? LOCAL_INSTRUMENTS : MARKETS).map((mk) => [mk, mk])} /></Field>
             <Field label="Data source">
               <div className="flex h-9 overflow-hidden rounded border border-border">
                 {(["local", "live"] as const).map((s) => {
@@ -404,14 +407,14 @@ type CompareRun = { candles: Candle[]; series: CompareSeries[] };
 
 function CompareView({ strategies }: { strategies: Strategy[] }) {
   const [market, setMarket] = useState("US500");
-  const [bars, setBars] = useState(3000);
+  const [bars, setBars] = useState(1000);
   const [riskPct, setRiskPct] = useState(0.4);
   const [selected, setSelected] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState("");
   const [offlineWarn, setOfflineWarn] = useState("");
   const [run, setRun] = useState<CompareRun | null>(null);
-  const [showPrice, setShowPrice] = useState(true);
+  const [showPrice, setShowPrice] = useState(false);
   const [idx, setIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(8);
