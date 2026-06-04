@@ -35,6 +35,7 @@ LOOKBACK = 400
 
 MACD = namedtuple("MACD", ["line", "signal", "hist"])
 Boll = namedtuple("Boll", ["upper", "mid", "lower"])
+Donchian = namedtuple("Donchian", ["upper", "lower"])
 
 # Tokens that must never appear in a user snippet (basic sandbox guard).
 _FORBIDDEN = (
@@ -145,6 +146,35 @@ class _Indicators:
         prev = [c.low for c in self._prev_candles[-period:]]
         return self._v(min(lows) if lows else None, min(prev) if prev else None)
 
+    def donchian(self, period: int) -> Donchian:
+        """Donchian channel: highest CLOSE / lowest CLOSE over ``period`` bars."""
+        cur = self._closes[-period:]
+        prev = self._prev_closes[-period:]
+        upper = self._v(max(cur) if cur else None, max(prev) if prev else None)
+        lower = self._v(min(cur) if cur else None, min(prev) if prev else None)
+        return Donchian(upper, lower)
+
+    def roc(self, n: int = 1) -> Val:
+        """Close-to-close % return over ``n`` bars (rate of change)."""
+        if len(self._closes) <= n:
+            return _nan_val()
+        base = self._closes[-1 - n]
+        cur = (100.0 * (self._closes[-1] - base) / base) if base else None
+        prev = None
+        if len(self._prev_closes) > n:
+            pbase = self._prev_closes[-1 - n]
+            prev = (100.0 * (self._prev_closes[-1] - pbase) / pbase) if pbase else None
+        return self._v(cur, prev)
+
+    def stdev(self, period: int) -> Val:
+        """Population standard deviation of the last ``period`` closes (volatility)."""
+        w = self._closes[-period:]
+        if len(w) < 2:
+            return _nan_val()
+        mean = sum(w) / len(w)
+        var = sum((x - mean) ** 2 for x in w) / len(w)
+        return self._v(var ** 0.5, None)
+
 
 def crossover(a: object, b: object) -> bool:
     """True when ``a`` crosses **above** ``b`` on this bar."""
@@ -178,10 +208,16 @@ class CompiledStrategy:
         self._code = compile(code, "<strategy>", "exec")
         self._exo = exo or {}
 
-    def decide(self, index: int, candles: Sequence[Candle]) -> str | None:
+    def decide(
+        self, index: int, candles: Sequence[Candle], *,
+        position: int = 0, bars_held: int = 0, equity: float = 100_000.0,
+        risk_pct: float = 0.0, leverage: float = 0.0,
+    ) -> str | None:
         """Return "BUY"/"SELL"/"FLAT" or None (hold) for bar ``index``.
 
-        ``candles`` is the full history up to and including ``index``.
+        ``candles`` is the full history up to and including ``index``. The keyword
+        args expose the strategy's live state (``position`` 1/-1/0, ``bars_held``,
+        ``equity``) and run parameters (``risk_pct``, ``leverage``) to the snippet.
         """
         window = list(candles[max(0, index - LOOKBACK + 1) : index + 1])
         if not window:
@@ -210,8 +246,12 @@ class CompiledStrategy:
             "sma": ctx.sma, "ema": ctx.ema, "rsi": ctx.rsi, "atr": ctx.atr,
             "adx": ctx.adx, "macd": ctx.macd, "bollinger": ctx.bollinger,
             "highest": ctx.highest, "lowest": ctx.lowest,
+            "donchian": ctx.donchian, "roc": ctx.roc, "stdev": ctx.stdev,
             "crossover": crossover, "crossunder": crossunder,
             "nan": math.nan, "isnan": math.isnan,
+            # live strategy state + run parameters
+            "position": int(position), "bars_held": int(bars_held), "equity": float(equity),
+            "risk_pct": float(risk_pct), "leverage": float(leverage),
             # output
             "signal": None,
         }

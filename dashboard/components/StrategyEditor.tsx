@@ -31,7 +31,9 @@ const PY_KEYWORDS = new Set([
 const API_NAMES = new Set([
   "open", "high", "low", "close", "volume", "price", "fear_and_greed", "fear_greed",
   "vix", "sentiment", "sma", "ema", "rsi", "macd", "atr", "adx", "bollinger",
-  "highest", "lowest", "crossover", "crossunder", "signal", "isnan", "nan", "i", "n",
+  "highest", "lowest", "donchian", "roc", "stdev", "crossover", "crossunder",
+  "signal", "isnan", "nan", "i", "n",
+  "position", "bars_held", "equity", "risk_pct", "leverage",
 ]);
 
 const CHEATSHEET: { group: string; items: [string, string][] }[] = [
@@ -44,7 +46,7 @@ const CHEATSHEET: { group: string; items: [string, string][] }[] = [
     ],
   },
   {
-    group: "Niche / exogenous",
+    group: "Exogenous",
     items: [
       ["fear_and_greed", "Fear & Greed index, 0–100"],
       ["vix", "CBOE Volatility Index"],
@@ -61,7 +63,20 @@ const CHEATSHEET: { group: string; items: [string, string][] }[] = [
       ["atr(p)", "average true range"],
       ["adx(p)", "trend strength"],
       ["bollinger(p, s)", "→ (upper, mid, lower)"],
+      ["donchian(p)", "→ (upper, lower) highest/lowest close"],
+      ["roc(n)", "close-to-close % return over n bars"],
+      ["stdev(p)", "rolling volatility (std of closes)"],
       ["highest(p) lowest(p)", "rolling high / low"],
+    ],
+  },
+  {
+    group: "Strategy state",
+    items: [
+      ["position", "current position: 1 long, -1 short, 0 flat"],
+      ["bars_held", "bars since the position opened"],
+      ["equity", "current account equity (£)"],
+      ["risk_pct", "configured risk %/trade"],
+      ["leverage", "instrument max leverage"],
     ],
   },
   {
@@ -123,6 +138,13 @@ export function StrategyEditor({
   const gutterRef = useRef<HTMLDivElement>(null);
   const savedRef = useRef<{ label: string; code: string }>({ label: initial.label, code: initial.code });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Undo/redo history (a controlled textarea breaks the browser's native stack).
+  const undoRef = useRef<string[]>([]);
+  const redoRef = useRef<string[]>([]);
+  const lastCommit = useRef(0);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findText, setFindText] = useState("");
+  const findRef = useRef<HTMLInputElement>(null);
 
   const slug = isNew ? slugify(label) : initial.name;
   const valid = label.trim().length > 0 && slugValid(slug);
@@ -174,16 +196,70 @@ export function StrategyEditor({
     if (gutterRef.current && taRef.current) gutterRef.current.scrollTop = taRef.current.scrollTop;
   }, []);
 
+  // Record the pre-change value, coalescing fast typing into ~400ms chunks.
+  const pushHistory = useCallback((prev: string, coalesce: boolean) => {
+    const now = Date.now();
+    if (!coalesce || undoRef.current.length === 0 || now - lastCommit.current > 400) {
+      undoRef.current.push(prev);
+      if (undoRef.current.length > 300) undoRef.current.shift();
+      redoRef.current = [];
+      lastCommit.current = now;
+    }
+  }, []);
+  const changeCode = useCallback((next: string, coalesce = true) => {
+    pushHistory(code, coalesce);
+    setCode(next);
+  }, [pushHistory, code]);
+  const undo = useCallback(() => {
+    if (!undoRef.current.length) return;
+    redoRef.current.push(code);
+    setCode(undoRef.current.pop() as string);
+    lastCommit.current = Date.now();
+  }, [code]);
+  const redo = useCallback(() => {
+    if (!redoRef.current.length) return;
+    undoRef.current.push(code);
+    setCode(redoRef.current.pop() as string);
+    lastCommit.current = Date.now();
+  }, [code]);
+  const insertToken = useCallback((token: string) => {
+    const ta = taRef.current;
+    if (!ta) { changeCode(code + token, false); return; }
+    const s = ta.selectionStart, e = ta.selectionEnd;
+    changeCode(code.slice(0, s) + token + code.slice(e), false);
+    requestAnimationFrame(() => { ta.focus(); ta.selectionStart = ta.selectionEnd = s + token.length; });
+  }, [code, changeCode]);
+  const findNext = useCallback(() => {
+    const ta = taRef.current;
+    if (!ta || !findText) return;
+    const from = ta.selectionEnd ?? 0;
+    let i = code.indexOf(findText, from);
+    if (i < 0) i = code.indexOf(findText, 0); // wrap to top
+    if (i < 0) return;
+    ta.focus();
+    ta.setSelectionRange(i, i + findText.length);
+    const line = code.slice(0, i).split("\n").length;
+    ta.scrollTop = Math.max(0, (line - 3) * 19.5); // ~13px * 1.5 line-height
+    requestAnimationFrame(syncScroll);
+  }, [code, findText, syncScroll]);
+
   const onKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const mod = e.ctrlKey || e.metaKey;
     if (e.key === "Tab") {
       e.preventDefault();
       const ta = e.currentTarget;
       const s = ta.selectionStart, end = ta.selectionEnd;
-      const next = code.slice(0, s) + "    " + code.slice(end);
-      setCode(next);
+      changeCode(code.slice(0, s) + "    " + code.slice(end), false);
       requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s + 4; });
+      return;
     }
-  }, [code]);
+    const k = e.key.toLowerCase();
+    if (mod && k === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+    if (mod && k === "y") { e.preventDefault(); redo(); return; }
+    if (mod && k === "s") { e.preventDefault(); doSave(label, code); return; }
+    if (mod && k === "f") { e.preventDefault(); setFindOpen(true); requestAnimationFrame(() => findRef.current?.select()); return; }
+    if (e.key === "Escape" && findOpen) { setFindOpen(false); }
+  }, [code, changeCode, undo, redo, doSave, label, findOpen]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 sm:p-6" onClick={onClose}>
@@ -238,7 +314,7 @@ export function StrategyEditor({
               <textarea
                 ref={taRef}
                 value={code}
-                onChange={(e) => setCode(e.target.value)}
+                onChange={(e) => changeCode(e.target.value)}
                 onScroll={syncScroll}
                 onKeyDown={onKeyDown}
                 spellCheck={false}
@@ -246,14 +322,35 @@ export function StrategyEditor({
                 autoCorrect="off"
                 className="absolute inset-0 m-0 resize-none overflow-auto whitespace-pre bg-transparent p-3 text-transparent caret-gold outline-none"
               />
+              {findOpen && (
+                <div className="absolute right-2 top-2 z-20 flex items-center gap-1 rounded border border-border bg-bg2 px-2 py-1 shadow-lg">
+                  <span className="font-mono text-[10px] text-textdim">find</span>
+                  <input
+                    ref={findRef}
+                    value={findText}
+                    onChange={(e) => setFindText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { e.preventDefault(); findNext(); }
+                      else if (e.key === "Escape") { setFindOpen(false); taRef.current?.focus(); }
+                    }}
+                    placeholder="text…"
+                    className="w-32 bg-transparent font-mono text-[12px] text-textmid outline-none"
+                  />
+                  <button onClick={findNext} title="Next (Enter)" className="px-1 font-mono text-[12px] text-textdim hover:text-gold">↵</button>
+                  <button onClick={() => { setFindOpen(false); taRef.current?.focus(); }} title="Close (Esc)" className="px-1 font-mono text-[12px] text-textdim hover:text-gold">✕</button>
+                </div>
+              )}
             </div>
           </div>
 
           <aside className="min-h-0 w-full shrink-0 overflow-auto border-t border-border bg-bg2 p-3 lg:w-72 lg:border-l lg:border-t-0">
             <div className="mb-2 font-mono text-[10px] uppercase tracking-wider text-gold">// Cheat Sheet</div>
-            <p className="mb-3 text-[11px] leading-snug text-textdim">
-              Runs once per bar against 20 years of local daily data. Set <code className="text-tk-api">signal</code>. Click any token to insert it.
+            <p className="mb-2 text-[11px] leading-snug text-textdim">
+              Runs once per bar against local daily data. Set <code className="text-tk-api">signal</code>. Click any token to insert it.
             </p>
+            <div className="mb-3 font-mono text-[9px] leading-relaxed text-textdim">
+              <span className="text-textmid">Keys:</span> Ctrl+Z undo · Ctrl+Y redo · Ctrl+F find · Ctrl+S save · Tab indent
+            </div>
             {CHEATSHEET.map((sec) => (
               <div key={sec.group} className="mb-3">
                 <div className="mb-1 font-mono text-[9px] uppercase tracking-wider text-textmid">{sec.group}</div>
@@ -261,7 +358,7 @@ export function StrategyEditor({
                   {sec.items.map(([token, desc]) => (
                     <button
                       key={token}
-                      onClick={() => insertAtCursor(taRef, token.split(" ")[0], setCode)}
+                      onClick={() => insertToken(token.split(" ")[0])}
                       className="block w-full rounded border border-border/60 bg-bg3 px-2 py-1 text-left transition hover:border-gold/50"
                       title={`Insert ${token}`}
                     >
@@ -312,18 +409,6 @@ export function StrategyEditor({
       `}</style>
     </div>
   );
-}
-
-function insertAtCursor(
-  taRef: React.RefObject<HTMLTextAreaElement>,
-  text: string,
-  setCode: (updater: (c: string) => string) => void,
-) {
-  const ta = taRef.current;
-  if (!ta) { setCode((c) => c + text); return; }
-  const s = ta.selectionStart, e = ta.selectionEnd;
-  setCode((c) => c.slice(0, s) + text + c.slice(e));
-  requestAnimationFrame(() => { ta.focus(); ta.selectionStart = ta.selectionEnd = s + text.length; });
 }
 
 function SaveBadge({ save, savedOnce }: { save: SaveState; savedOnce: boolean }) {

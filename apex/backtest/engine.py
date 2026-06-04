@@ -32,6 +32,7 @@ class _OpenTrade:
     size: float
     opened: str
     strategy: str
+    open_index: int = 0
 
     def unrealised(self, price: float) -> float:
         sign = 1.0 if self.direction is Direction.BUY else -1.0
@@ -138,9 +139,19 @@ def run_backtest(
     for i in range(min(warmup, n), n):
         bar = candles[i]
         day = bar.time.date().isoformat()
-        # A custom strategy's decision depends only on the bar, so evaluate once
-        # and reuse it for both signal-based exits and entries.
-        decision = custom.decide(i, candles) if custom is not None else None
+        # A custom strategy's decision depends on the bar + live state, so evaluate
+        # once and reuse it for both signal-based exits and entries.
+        if custom is not None:
+            pos = (1 if open_trade and open_trade.direction is Direction.BUY
+                   else -1 if open_trade and open_trade.direction is Direction.SELL else 0)
+            held = (i - open_trade.open_index) if open_trade else 0
+            eq_now = balance + (open_trade.unrealised(bar.close) if open_trade else 0.0)
+            decision = custom.decide(
+                i, candles, position=pos, bars_held=held, equity=eq_now,
+                risk_pct=risk_pct, leverage=float(getattr(market, "fca_leverage", 0)),
+            )
+        else:
+            decision = None
 
         # ── manage an open trade against this bar (intrabar SL/TP first) ──
         if open_trade is not None:
@@ -191,7 +202,7 @@ def run_backtest(
                 open_trade = _OpenTrade(
                     direction=sig.direction, entry=sig.entry, stop=sig.stop,
                     target=sig.target, size=size, opened=bar.time.isoformat(),
-                    strategy=sig.strategy,
+                    strategy=sig.strategy, open_index=i,
                 )
 
     # close any trade still open at the end

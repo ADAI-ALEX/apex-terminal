@@ -23,10 +23,17 @@ from __future__ import annotations
 from loguru import logger
 
 from apex.backtest.engine import run_backtest
-from apex.config import MARKETS, Settings
+from apex.config import MARKETS, Market, Regime, Settings
 from apex.ig.client import Broker
 from apex.models import Candle
 from apex.strategies import store as strategy_store
+
+# Instruments available for OFFLINE backtesting only (local seed data), kept out of
+# the live `MARKETS` universe so the trading engine never tries to trade them.
+LOCAL_BACKTEST_MARKETS: dict[str, Market] = {
+    "BTCUSD": Market("BTCUSD", "Bitcoin", "BACKTEST.BTCUSD", 1.0, 2, "00:00", "23:59", Regime.VOLATILE, 1.0),
+    "ETHUSD": Market("ETHUSD", "Ethereum", "BACKTEST.ETHUSD", 1.0, 2, "00:00", "23:59", Regime.VOLATILE, 1.0),
+}
 
 
 def run_request(
@@ -34,7 +41,7 @@ def run_request(
 ) -> dict:
     try:
         key = str(req.get("market", "US500")).upper()
-        market = MARKETS.get(key)
+        market = MARKETS.get(key) or LOCAL_BACKTEST_MARKETS.get(key)
         if market is None:
             return {"error": f"Unknown market '{key}'."}
 

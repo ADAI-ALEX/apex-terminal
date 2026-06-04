@@ -46,8 +46,11 @@ except Exception:  # pragma: no cover - defensive
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "apex" / "backtest" / "data"
 
-# Instrument → Yahoo OHLCV symbol. These three are the offline-backtest universe.
-YAHOO_SYMBOLS = {"US500": "%5EGSPC", "FTSE100": "%5EFTSE", "EURUSD": "EURUSD=X"}
+# Instrument → Yahoo OHLCV symbol. The offline-backtest universe (indices, FX, crypto).
+YAHOO_SYMBOLS = {
+    "US500": "%5EGSPC", "FTSE100": "%5EFTSE", "EURUSD": "EURUSD=X",
+    "BTCUSD": "BTC-USD", "ETHUSD": "ETH-USD",
+}
 VIX_SYMBOL = "%5EVIX"
 _HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 START_YEAR = 2006
@@ -71,6 +74,17 @@ ANCHORS: dict[str, dict[int, float]] = {
         2011: 1.294, 2012: 1.319, 2013: 1.375, 2014: 1.210, 2015: 1.086, 2016: 1.052,
         2017: 1.200, 2018: 1.146, 2019: 1.121, 2020: 1.221, 2021: 1.137, 2022: 1.070,
         2023: 1.104, 2024: 1.035, 2025: 1.080, 2026: 1.075,
+    },
+    # Crypto anchors are only the offline-fallback path — the real seed pulls Yahoo
+    # daily history (BTC/ETH from ~2014). Pre-history values stay tiny but non-zero.
+    "BTCUSD": {
+        2005: 1, 2013: 800, 2014: 320, 2015: 430, 2016: 960, 2017: 14000, 2018: 3700,
+        2019: 7200, 2020: 29000, 2021: 46000, 2022: 16500, 2023: 42000, 2024: 93000,
+        2025: 100000, 2026: 105000,
+    },
+    "ETHUSD": {
+        2005: 1, 2015: 8, 2016: 8, 2017: 760, 2018: 130, 2019: 130, 2020: 730,
+        2021: 3680, 2022: 1200, 2023: 2280, 2024: 3300, 2025: 3500, 2026: 3600,
     },
 }
 
