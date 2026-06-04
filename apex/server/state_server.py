@@ -116,6 +116,41 @@ def create_app() -> FastAPI:
 
         return await asyncio.to_thread(_run)
 
+    # ── Backtest strategy library (default + custom code editor) ─────────
+    @app.get("/strategies")
+    async def strategies(x_apex_secret: str | None = Header(default=None)) -> dict:
+        _check_secret(x_apex_secret)
+        from apex.strategies import store
+
+        return {"strategies": await asyncio.to_thread(store.list_dicts)}
+
+    @app.post("/strategies")
+    async def strategies_write(payload: dict, x_apex_secret: str | None = Header(default=None)) -> dict:
+        _check_secret(x_apex_secret)
+
+        def _write() -> dict:
+            from apex.backtest.custom_runner import validate_code
+            from apex.strategies import store
+
+            action = str(payload.get("action", "save"))
+            name = str(payload.get("name", "")).strip()
+            if not store.is_valid_name(name):
+                return {"ok": False, "error": f"Invalid strategy name: {name!r}"}
+            if action == "delete":
+                store.delete(name)
+                return {"ok": True, "action": "delete", "name": name}
+            code = str(payload.get("code", ""))
+            ok, err = validate_code(code)
+            if not ok:
+                return {"ok": False, "error": err}
+            meta = store.save(name, code)
+            return {"ok": True, "action": "save", "strategy": meta.to_dict()}
+
+        result = await asyncio.to_thread(_write)
+        if not result.get("ok"):
+            raise HTTPException(status_code=422, detail=result)
+        return result
+
     @app.post("/onboarding/reset")
     async def onboarding_reset(x_apex_secret: str | None = Header(default=None)) -> OnboardingStatus:
         _check_secret(x_apex_secret)

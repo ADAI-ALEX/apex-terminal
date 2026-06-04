@@ -65,6 +65,7 @@ class Heartbeat:
         self._running = True
         self._broker_error = ""
         self._last_backtest_id: str | None = None
+        self._last_strategy_write_id: str | None = None
         self._config_stamp = self._read_config_stamp()
         self._ig_sig = self._ig_signature()
 
@@ -86,6 +87,7 @@ class Heartbeat:
             logger.exception("Startup data load failed (continuing): {}", exc)
         self._push_state()
         await self._publish_kv()  # publish markets/candles immediately so the UI populates
+        await self._publish_strategies()  # publish the strategy list so the dropdown populates
         logger.info("Heartbeat starting — {} markets, mode={}", len(self.markets), self.broker.mode)
 
         await asyncio.gather(
@@ -95,6 +97,7 @@ class Heartbeat:
             self._loop(self._health, self.s.heartbeat.health_seconds, "Health"),
             self._loop(self._config_watch, 8, "ConfigWatch"),
             self._loop(self._backtest_watch, 2, "Backtest"),
+            self._loop(self._strategy_watch, 2, "StrategyWatch"),
             self._loop(self._publish_chart, self.s.heartbeat.tier2_signal_seconds, "ChartPublish"),
         )
 
@@ -355,6 +358,62 @@ class Heartbeat:
         from apex.backtest.runner import run_request
 
         return run_request(self.broker, self.s, req, history=self.history)
+
+    # ──────────────────────────────────────────────────────────────────
+    #  Strategy watcher — persist custom strategies written from the dashboard
+    # ──────────────────────────────────────────────────────────────────
+    async def _strategy_watch(self) -> None:
+        """Process strategy save/delete requests from the dashboard (cloud relay).
+
+        The dashboard's code editor auto-saves by queuing a write in KV; the laptop
+        (the only filesystem writer) persists it under ``apex/strategies/custom/``
+        and republishes the strategy list so every client's dropdown stays in sync.
+        """
+        if not kv.kv_enabled():
+            return
+        req = await asyncio.to_thread(kv.kv_get, kv.STRATEGY_WRITE_KEY)
+        if not req or not isinstance(req, dict):
+            return
+        wid = str(req.get("id", ""))
+        if not wid or wid == self._last_strategy_write_id:
+            return
+        self._last_strategy_write_id = wid
+        ack = await asyncio.to_thread(self._apply_strategy_write, req)
+        await asyncio.to_thread(kv.kv_set, kv.STRATEGY_WRITE_ACK_KEY, {"id": wid, **ack})
+        await self._publish_strategies()
+
+    def _apply_strategy_write(self, req: dict) -> dict:
+        from apex.backtest.custom_runner import validate_code
+        from apex.strategies import store
+
+        action = str(req.get("action", "save"))
+        name = str(req.get("name", "")).strip()
+        try:
+            if not store.is_valid_name(name):
+                return {"ok": False, "error": f"Invalid strategy name: {name!r}"}
+            if action == "delete":
+                store.delete(name)
+                return {"ok": True, "action": "delete", "name": name}
+            code = str(req.get("code", ""))
+            ok, err = validate_code(code)
+            if not ok:
+                return {"ok": False, "error": err}
+            store.save(name, code)
+            return {"ok": True, "action": "save", "name": name}
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Strategy write failed: {}", exc)
+            return {"ok": False, "error": str(exc)}
+
+    async def _publish_strategies(self) -> None:
+        """Publish the available strategy list to KV for the dashboard dropdown."""
+        if not kv.kv_enabled():
+            return
+        try:
+            from apex.strategies import store
+
+            await asyncio.to_thread(kv.kv_set, kv.STRATEGIES_KEY, store.list_dicts())
+        except Exception as exc:  # noqa: BLE001 - never let telemetry break the loop
+            logger.debug("Strategy publish skipped: {}", exc)
 
     def _read_config_stamp(self) -> str | None:
         try:

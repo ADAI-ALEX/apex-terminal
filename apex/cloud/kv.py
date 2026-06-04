@@ -24,6 +24,9 @@ STATUS_KEY = "apex:onboarding_status" # algo-confirmed onboarding status
 BACKTEST_REQ_KEY = "apex:backtest_request"   # dashboard → laptop: run this backtest
 BACKTEST_RES_KEY = "apex:backtest_result"    # laptop → dashboard: backtest result
 CHART_KEY = "apex:chart"             # laptop → dashboard: multi-interval chart candles
+STRATEGIES_KEY = "apex:strategies"   # laptop → dashboard: available strategy list
+STRATEGY_WRITE_KEY = "apex:strategy_write"        # dashboard → laptop: save/delete a custom strategy
+STRATEGY_WRITE_ACK_KEY = "apex:strategy_write_ack"  # laptop → dashboard: write acknowledgement
 
 _TIMEOUT = 8
 
