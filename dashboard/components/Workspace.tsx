@@ -17,7 +17,7 @@ export function Workspace() {
     <div>
       <nav className="mb-4 flex gap-1 border-b border-border">
         <TopTab active={tab === "terminal"} onClick={() => setTab("terminal")}>Terminal</TopTab>
-        <TopTab active={tab === "backtest"} onClick={() => setTab("backtest")}>Backtest</TopTab>
+        <TopTab active={tab === "backtest"} onClick={() => setTab("backtest")}>Algorithms</TopTab>
       </nav>
       {tab === "terminal" ? <Terminal /> : <BacktestTab />}
     </div>

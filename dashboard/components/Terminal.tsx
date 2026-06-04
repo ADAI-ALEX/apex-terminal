@@ -486,7 +486,7 @@ export function Terminal() {
           <span className="font-mono text-sm font-bold tracking-[0.25em] text-gold">APEX</span>
           <div className="flex overflow-hidden rounded border border-border font-mono text-[10px]">
             <button onClick={() => setView("terminal")} className={`px-3 py-1 uppercase tracking-wider ${view === "terminal" ? "bg-gold/15 text-gold" : "text-textdim hover:text-textmid"}`}>Terminal</button>
-            <button onClick={() => setView("backtest")} className={`border-l border-border px-3 py-1 uppercase tracking-wider ${view === "backtest" ? "bg-gold/15 text-gold" : "text-textdim hover:text-textmid"}`}>Backtest</button>
+            <button onClick={() => setView("backtest")} className={`border-l border-border px-3 py-1 uppercase tracking-wider ${view === "backtest" ? "bg-gold/15 text-gold" : "text-textdim hover:text-textmid"}`}>Algorithms</button>
           </div>
           <input
             value={query}
@@ -495,7 +495,7 @@ export function Terminal() {
             placeholder="COMMAND OR SEARCH WIDGETS · ENTER"
             className="hidden min-w-0 flex-1 rounded border border-border bg-bg3 px-3 py-1 font-mono text-[11px] uppercase tracking-wider text-textmid outline-none placeholder:text-textdim focus:border-gold sm:block"
           />
-          <StatusDot status={status} mode={state?.mode} />
+          <StatusDot status={status} lastHeartbeat={state?.last_heartbeat} />
           <Clock />
           <ThemeToggle />
           {!isPhone && (
@@ -758,12 +758,19 @@ function Clock() {
   return <span className="font-mono text-[12px] tabular-nums text-gold">{now}</span>;
 }
 
-function StatusDot({ status, mode }: { status: string; mode?: string }) {
-  const live = status === "live";
+function StatusDot({ status, lastHeartbeat }: { status: string; lastHeartbeat?: string }) {
+  // "Engine" = is the laptop/backend actively pushing heartbeats? The state can be
+  // served stale from KV after the engine stops, so freshness is judged by the
+  // heartbeat age, not just whether the fetch succeeded.
+  const ageMs = lastHeartbeat ? Date.now() - Date.parse(lastHeartbeat) : Infinity;
+  const live = status === "live" && Number.isFinite(ageMs) && ageMs < 120_000;
+  const title = lastHeartbeat
+    ? `Engine ${live ? "running" : "offline"} · last heartbeat ${new Date(lastHeartbeat).toLocaleTimeString()}`
+    : "Engine offline — backend not running";
   return (
-    <span className="hidden items-center gap-1.5 font-mono text-[10px] text-textdim sm:flex">
-      <span className={`h-1.5 w-1.5 rounded-full ${live ? "bg-up" : "bg-down"}`} />
-      {mode ?? "—"}
+    <span className="hidden items-center gap-1.5 font-mono text-[10px] text-textdim sm:flex" title={title}>
+      <span className={`h-1.5 w-1.5 rounded-full ${live ? "bg-up" : "bg-down"} ${live ? "animate-pulse" : ""}`} />
+      Engine
     </span>
   );
 }
