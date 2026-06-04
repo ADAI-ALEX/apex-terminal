@@ -102,9 +102,10 @@ function highlight(code: string): string {
 }
 
 export function StrategyEditor({
-  initial, onClose, onSaved, onDelete,
+  initial, existingNames = [], onClose, onSaved, onDelete,
 }: {
   initial: Strategy;
+  existingNames?: string[]; // slugs already in use — used to block duplicate names
   onClose: () => void;
   onSaved: (s: Strategy) => void;
   onDelete: (slug: string) => void; // parent removes it from the list + closes (optimistic)
@@ -133,6 +134,10 @@ export function StrategyEditor({
       setSave({ status: "error", msg: "Enter a name (letters/numbers/spaces)." });
       return;
     }
+    if (isNew && existingNames.includes(sg)) {
+      setSave({ status: "error", msg: `Name "${l.trim()}" is already taken — choose a unique name.` });
+      return;
+    }
     setSave({ status: "saving" });
     try {
       const res = await fetch("/api/strategies", {
@@ -148,7 +153,7 @@ export function StrategyEditor({
     } catch {
       setSave({ status: "error", msg: "Network error while saving." });
     }
-  }, [initial.name, initial.description, isNew, onSaved]);
+  }, [initial.name, initial.description, isNew, onSaved, existingNames]);
 
   // Debounced auto-save — only AFTER the first manual save.
   useEffect(() => {
@@ -213,9 +218,6 @@ export function StrategyEditor({
             </button>
             <button onClick={onClose} className="rounded border border-border bg-bg3 px-3 py-1.5 text-xs font-bold text-textmid hover:text-gold">Close</button>
           </div>
-          {!label.trim() && save.status === "error" && (
-            <div className="w-full font-mono text-[11px] font-bold text-down">⚠ Please enter a name for your algorithm.</div>
-          )}
         </div>
 
         {/* Body: editor + cheat-sheet sidebar */}
