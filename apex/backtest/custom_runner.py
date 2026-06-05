@@ -190,6 +190,113 @@ def crossunder(a: object, b: object) -> bool:
     return ap >= bp and an < bn
 
 
+# ── Markov regime model (the "hedge-fund method") ───────────────────────────
+# Quant-desk regime engine, exposed to snippets as ``markov(...)``. It is the
+# observable Markov-chain method: label every bar Bull / Bear / Sideways from a
+# rolling N-bar % return, count state-to-state transitions into a 3x3
+# maximum-likelihood matrix, raise that matrix to the ``horizon`` power
+# (Chapman-Kolmogorov) for an n-step forecast, then read today's row for
+# tomorrow's probabilities. ``edge = P(bull) - P(bear)`` is the tradeable
+# signal: its sign is direction, its size is conviction. The fit uses ONLY bars
+# up to the current one, so a per-bar backtest is walk-forward by construction —
+# the matrix is re-estimated every bar from data that existed before that bar.
+
+#: Trailing bars used to fit the transition matrix (rolling, adaptive, bounded).
+MARKOV_WINDOW = 1500
+#: How many closes ``decide`` hands the engine each bar (window + headroom for L).
+_MARKOV_SLICE = MARKOV_WINDOW + 256
+
+Regime = namedtuple("Regime", [
+    "state",                          # "BULL" | "BEAR" | "SIDE" — today's regime
+    "p_bull", "p_bear", "p_side",     # forecast probabilities for +horizon bars
+    "edge",                           # p_bull - p_bear  (signal: + long, - short)
+    "stickiness",                     # P(stay in today's state) — regime persistence
+    "sd_bull", "sd_bear", "sd_side",  # stationary distribution (long-run state mix)
+])
+
+_BEAR, _SIDE, _BULL = 0, 1, 2
+#: Returned before enough history exists to fit a matrix → edge 0 → no trade.
+_NEUTRAL = Regime("SIDE", 1 / 3, 1 / 3, 1 / 3, 0.0, 1 / 3, 1 / 3, 1 / 3, 1 / 3)
+
+
+def _matmul3(a: list[list[float]], b: list[list[float]]) -> list[list[float]]:
+    """Multiply two 3x3 matrices (used to power the transition matrix)."""
+    return [[sum(a[r][k] * b[k][c] for k in range(3)) for c in range(3)] for r in range(3)]
+
+
+def _stationary3(p: list[list[float]], iters: int = 250) -> list[float]:
+    """Long-run state mix: the vector ``v`` with ``vP = v``, via power iteration."""
+    v = [1 / 3, 1 / 3, 1 / 3]
+    for _ in range(iters):
+        nv = [sum(v[r] * p[r][c] for r in range(3)) for c in range(3)]
+        s = sum(nv) or 1.0
+        nv = [x / s for x in nv]
+        if max(abs(nv[k] - v[k]) for k in range(3)) < 1e-10:
+            return nv
+        v = nv
+    return v
+
+
+def compute_markov(
+    closes: Sequence[float], state_lookback: int = 20,
+    bull_thr: float | None = None, bear_thr: float | None = None,
+    horizon: int = 1, window: int = MARKOV_WINDOW, band: float = 0.5,
+) -> Regime:
+    """Fit the regime transition matrix from ``closes`` and forecast ``horizon`` ahead.
+
+    When ``bull_thr`` / ``bear_thr`` are omitted the Bull / Bear bands are scaled to
+    the instrument's own volatility (``band`` × stdev of the N-bar returns), so the
+    model is not tied to the subjective ±5% the video flags as its weak link and
+    works as-is on indices, FX and crypto. Only past closes are read, so calling it
+    once per bar yields a walk-forward (look-ahead-free) estimate.
+    """
+    length = max(1, int(state_lookback))
+    h = max(1, int(horizon))
+    closes = list(closes)
+    if window > 0 and len(closes) > window + length:
+        closes = closes[-(window + length):]
+    n = len(closes)
+    if n < length + 2:
+        return _NEUTRAL
+
+    rets = [100.0 * (closes[j] - closes[j - length]) / closes[j - length]
+            for j in range(length, n) if closes[j - length]]
+    if len(rets) < 2:
+        return _NEUTRAL
+
+    if bull_thr is None or bear_thr is None:
+        mean = sum(rets) / len(rets)
+        sigma = (sum((x - mean) ** 2 for x in rets) / len(rets)) ** 0.5
+        if sigma <= 1e-9:
+            return _NEUTRAL
+        bull_thr = band * sigma if bull_thr is None else bull_thr
+        bear_thr = -band * sigma if bear_thr is None else bear_thr
+
+    def label(ret: float) -> int:
+        if ret >= bull_thr:
+            return _BULL
+        if ret <= bear_thr:
+            return _BEAR
+        return _SIDE
+
+    labels = [label(r) for r in rets]
+    counts = [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 1.0]]  # Laplace smoothing
+    for a, b in zip(labels[:-1], labels[1:]):
+        counts[a][b] += 1.0
+    p = [[v / sum(row) for v in row] for row in counts]  # row-stochastic matrix
+
+    m = p
+    for _ in range(h - 1):  # Chapman-Kolmogorov: P^horizon for an n-step forecast
+        m = _matmul3(m, p)
+
+    cur = labels[-1]
+    p_bear, p_side, p_bull = m[cur][_BEAR], m[cur][_SIDE], m[cur][_BULL]
+    sd = _stationary3(p)
+    state = "BULL" if cur == _BULL else "BEAR" if cur == _BEAR else "SIDE"
+    return Regime(state, p_bull, p_bear, p_side, p_bull - p_bear,
+                  m[cur][cur], sd[_BULL], sd[_BEAR], sd[_SIDE])
+
+
 _DECISIONS = {
     "BUY": "BUY", "LONG": "BUY",
     "SELL": "SELL", "SHORT": "SELL",
@@ -229,6 +336,16 @@ class CompiledStrategy:
         exo_at = {name: (vals[index] if 0 <= index < len(vals) else math.nan)
                   for name, vals in self._exo.items()}
 
+        # Markov regime sees a deeper (but still bounded, walk-forward) close
+        # history so it can fit a stable transition matrix; only bars <= index.
+        m_closes = [c.close for c in candles[max(0, index + 1 - _MARKOV_SLICE) : index + 1]]
+
+        def markov(state_lookback: int = 20, bull_thr: float | None = None,
+                   bear_thr: float | None = None, horizon: int = 1,
+                   window: int = MARKOV_WINDOW, band: float = 0.5) -> Regime:
+            return compute_markov(m_closes, state_lookback, bull_thr, bear_thr,
+                                  horizon, window, band)
+
         ns: dict[str, object] = {
             "__builtins__": _SAFE_BUILTINS,
             # current bar (Val carries the previous bar's value for crossovers)
@@ -250,6 +367,7 @@ class CompiledStrategy:
             "highest": ctx.highest, "lowest": ctx.lowest,
             "donchian": ctx.donchian, "roc": ctx.roc, "stdev": ctx.stdev,
             "crossover": crossover, "crossunder": crossunder,
+            "markov": markov,  # hedge-fund regime engine → Regime(state, p_bull, ...)
             "nan": math.nan, "isnan": math.isnan,
             # live strategy state + run parameters
             "position": int(position), "bars_held": int(bars_held), "equity": float(equity),
