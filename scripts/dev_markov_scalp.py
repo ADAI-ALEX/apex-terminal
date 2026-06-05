@@ -776,10 +776,124 @@ elif position == -1:
 '''
 
 
+def build_p1() -> str:
+    # The prompt's design: session-filtered RSI(14)+Bollinger mean reversion with
+    # VWAP confirmation, range filter, fixed TP via the engine, and prop risk rules.
+    return '''
+can_enter = (7 <= hour < 17)
+overnight = hour >= 18 or hour < 7
+adx_v = adx(14)
+ranging = adx_v < 25
+u, mid, l = bollinger(20, 2.0)
+rsi14 = rsi(14)
+a = atr(14)
+vw = vwap(20)
+
+TARGET = 8.0
+halt = day_pnl_pct <= -3.5 or total_pnl_pct <= -6.0 or dd_from_peak_pct >= 8.0
+base = 1.5
+if dd_from_peak_pct >= 6.0:
+    base = base * 0.5
+if day_pnl_pct >= 0.25 * TARGET:
+    base = base * 0.5
+if consec_losses >= 2:
+    base = base * 0.5
+risk = round(max(0.25, min(base, 1.5)), 2)
+
+signal = "HOLD"
+if halt:
+    if position != 0:
+        signal = "FLAT"
+elif position == 0:
+    if can_enter and ranging:
+        if rsi14 < 30 and close <= l and close < vw:
+            signal = "BUY"
+        elif rsi14 > 70 and close >= u and close > vw:
+            signal = "SELL"
+elif overnight:
+    signal = "FLAT"
+'''
+
+
+def build_p2() -> str:
+    # p1 + the natural MR exit (revert to the Bollinger mean) and more trades.
+    return '''
+can_enter = (7 <= hour < 17)
+overnight = hour >= 18 or hour < 7
+adx_v = adx(14)
+ranging = adx_v < 28
+u, mid, l = bollinger(20, 2.0)
+rsi14 = rsi(14)
+
+TARGET = 8.0
+halt = day_pnl_pct <= -3.5 or total_pnl_pct <= -6.0 or dd_from_peak_pct >= 8.0
+base = 1.5
+if dd_from_peak_pct >= 6.0:
+    base = base * 0.5
+if day_pnl_pct >= 0.25 * TARGET:
+    base = base * 0.5
+if consec_losses >= 2:
+    base = base * 0.5
+risk = round(max(0.25, min(base, 1.5)), 2)
+
+signal = "HOLD"
+if halt:
+    if position != 0:
+        signal = "FLAT"
+elif position == 0:
+    if can_enter and ranging:
+        if rsi14 < 35 and close <= l:
+            signal = "BUY"
+        elif rsi14 > 65 and close >= u:
+            signal = "SELL"
+elif position == 1:
+    if close >= mid or overnight:
+        signal = "FLAT"
+elif position == -1:
+    if close <= mid or overnight:
+        signal = "FLAT"
+'''
+
+
+def build_s5() -> str:
+    # markov_trend_swing (s4) scaled for HIGHER GROWTH: risk to 2.0%, daily stop
+    # -2.5% so the worst day stays < 5%; total stop -6%. Scaling a REAL edge.
+    return '''
+mk = markov(20, band=0.5, window=400)
+edge = mk.edge
+e200 = ema(200)
+r = rsi(2)
+up = edge > 0.06 and close > e200
+dn = edge < -0.06 and close < e200
+
+halt = total_pnl_pct <= -6.0
+day_locked = day_pnl_pct <= -2.5
+
+risk = round(max(0.75, min(0.9 + abs(edge) * 1.5, 2.0)), 2)
+
+signal = "HOLD"
+if halt:
+    if position != 0:
+        signal = "FLAT"
+elif position == 0 and not day_locked:
+    if up and r < 35:
+        signal = "BUY"
+    elif dn and r > 65:
+        signal = "SELL"
+elif position == 1:
+    if edge < -0.02 or r > 80:
+        signal = "FLAT"
+elif position == -1:
+    if edge > 0.02 or r < 20:
+        signal = "FLAT"
+'''
+
+
 BUILDS = {"v1": build_v1, "v2": build_v2, "v3": build_v3,
           "v4": build_v4, "v5": build_v5, "v6": build_v6, "v7": build_v7,
           "v2a": build_v2a, "v2b": build_v2b, "v2c": build_v2c, "m1": build_m1,
-          "s1": build_s1, "s2": build_s2, "s3": build_s3, "s4": build_s4}
+          "s1": build_s1, "s2": build_s2, "s3": build_s3, "s4": build_s4,
+          "p1": build_p1, "p2": build_p2, "s5": build_s5}
 
 if __name__ == "__main__":
     ver = sys.argv[1] if len(sys.argv) > 1 else "v7"
