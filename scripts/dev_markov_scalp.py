@@ -889,11 +889,130 @@ elif position == -1:
 '''
 
 
+def build_t1() -> str:
+    # Trend-RIDER for higher growth: enters on BREAKOUTS (catches grind-ups with no
+    # dips) or dips, in a markov up/down regime; rides with a far target + wide stop
+    # and exits on a trend break (close vs EMA20) or regime flip. Lets winners run.
+    return '''
+mk = markov(20, band=0.5, window=400)
+edge = mk.edge
+e200 = ema(200)
+e20 = ema(20)
+hh = highest(20)
+ll = lowest(20)
+r = rsi(2)
+up = edge > 0.05 and close > e200
+dn = edge < -0.05 and close < e200
+
+halt = total_pnl_pct <= -6.0
+day_locked = day_pnl_pct <= -2.5
+risk = round(max(0.5, min(0.8 + abs(edge) * 1.4, 2.0)), 2)
+
+stop_mult = 2.0     # wider initial stop (trend room)
+target_rr = 8.0     # far target -> ride the winner; exit is trend-break/regime-flip
+
+signal = "HOLD"
+if halt:
+    if position != 0:
+        signal = "FLAT"
+elif position == 0 and not day_locked:
+    if up and (close > hh.prev or r < 30):
+        signal = "BUY"
+    elif dn and (close < ll.prev or r > 70):
+        signal = "SELL"
+elif position == 1:
+    if edge < -0.02 or close < e20:
+        signal = "FLAT"
+elif position == -1:
+    if edge > 0.02 or close > e20:
+        signal = "FLAT"
+'''
+
+
+def build_t3() -> str:
+    # t1 refined: BREAKOUTS only in a STRONG regime (edge>0.12) to cut whipsaw;
+    # dips in any up/down regime. Rides with far target + EMA20 trend-break exit.
+    return '''
+mk = markov(20, band=0.5, window=400)
+edge = mk.edge
+e200 = ema(200)
+e20 = ema(20)
+hh = highest(20)
+ll = lowest(20)
+r = rsi(2)
+up = edge > 0.05 and close > e200
+dn = edge < -0.05 and close < e200
+strong_up = edge > 0.12 and close > e200
+strong_dn = edge < -0.12 and close < e200
+
+halt = total_pnl_pct <= -6.0
+day_locked = day_pnl_pct <= -2.5
+risk = round(max(0.5, min(0.8 + abs(edge) * 1.4, 2.0)), 2)
+
+stop_mult = 2.0
+target_rr = 8.0
+
+signal = "HOLD"
+if halt:
+    if position != 0:
+        signal = "FLAT"
+elif position == 0 and not day_locked:
+    if (strong_up and close > hh.prev) or (up and r < 25):
+        signal = "BUY"
+    elif (strong_dn and close < ll.prev) or (dn and r > 75):
+        signal = "SELL"
+elif position == 1:
+    if edge < -0.02 or close < e20:
+        signal = "FLAT"
+elif position == -1:
+    if edge > 0.02 or close > e20:
+        signal = "FLAT"
+'''
+
+
+def build_t2() -> str:
+    # Swing+ HIGH-QUALITY dip entries, but LET WINNERS RUN: far target + EMA20
+    # trend-break trailing exit (no RSI>80 cap). Bigger wins in trends = growth.
+    return '''
+mk = markov(20, band=0.5, window=400)
+edge = mk.edge
+e200 = ema(200)
+e20 = ema(20)
+r = rsi(2)
+up = edge > 0.06 and close > e200
+dn = edge < -0.06 and close < e200
+
+halt = total_pnl_pct <= -6.0
+day_locked = day_pnl_pct <= -2.5
+risk = round(max(0.75, min(0.9 + abs(edge) * 1.5, 2.0)), 2)
+
+stop_mult = 1.5
+target_rr = 8.0     # far target -> ride; exit is regime flip or EMA20 trend break
+
+signal = "HOLD"
+if halt:
+    if position != 0:
+        signal = "FLAT"
+elif position == 0 and not day_locked:
+    if up and r < 35:
+        signal = "BUY"
+    elif dn and r > 65:
+        signal = "SELL"
+elif position == 1:
+    if edge < -0.02 or close < e20:
+        signal = "FLAT"
+elif position == -1:
+    if edge > 0.02 or close > e20:
+        signal = "FLAT"
+'''
+
+
 BUILDS = {"v1": build_v1, "v2": build_v2, "v3": build_v3,
           "v4": build_v4, "v5": build_v5, "v6": build_v6, "v7": build_v7,
           "v2a": build_v2a, "v2b": build_v2b, "v2c": build_v2c, "m1": build_m1,
           "s1": build_s1, "s2": build_s2, "s3": build_s3, "s4": build_s4,
-          "p1": build_p1, "p2": build_p2, "s5": build_s5}
+          "p1": build_p1, "p2": build_p2, "s5": build_s5, "t1": build_t1,
+          "t2": build_t2, "t3": build_t3}
 
 if __name__ == "__main__":
     ver = sys.argv[1] if len(sys.argv) > 1 else "v7"
@@ -920,8 +1039,12 @@ if __name__ == "__main__":
         show(ver, code, DAILY, "EURUSD", 1440)
     if which == "usdaily":
         show(ver, code, DAILY, "US500", 1440)
-    if which == "us60":
-        show(ver, code, US_DEEP, "US500", 60)
+    if which in ("us60", "us60x", "nas60x"):
+        wins = US_DEEP if which == "us60" else (US_DEEP + [
+            ("2026Q1", "2026-01-01", "2026-04-01"),
+            ("2026 AprJun", "2026-04-01", None),
+        ])
+        show(ver, code, wins, "NAS100" if which == "nas60x" else "US500", 60)
     if which == "us15":
         show(ver, code, US_DEEP, "US500", 15)
     if which == "deepcmp":

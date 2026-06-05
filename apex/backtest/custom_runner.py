@@ -69,6 +69,16 @@ def _nan_val() -> Val:
     return Val(math.nan, math.nan)
 
 
+def _clamp(value: object, lo: float, hi: float) -> float | None:
+    """Coerce a snippet output to a float in [lo, hi]; None if unset/invalid."""
+    if value is None:
+        return None
+    try:
+        return max(lo, min(float(value), hi))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 def _now_prev(x: object) -> tuple[float, float]:
     now = float(x)  # type: ignore[arg-type]
     return now, float(getattr(x, "prev", now))
@@ -327,6 +337,10 @@ class CompiledStrategy:
             raise ValueError(err)
         self._code = compile(code, "<strategy>", "exec")
         self._exo = exo or {}
+        # Snippet-chosen exit geometry for the most recent decide() (None → engine
+        # defaults). Lets a trend strategy push the target far and ride a winner.
+        self.last_stop_mult: float | None = None
+        self.last_target_rr: float | None = None
 
     def decide(
         self, index: int, candles: Sequence[Candle], *,
@@ -406,6 +420,8 @@ class CompiledStrategy:
             "dd_from_peak_pct": float(dd_from_peak_pct), "total_pnl_pct": float(total_pnl_pct),
             # outputs (the snippet sets these)
             "signal": None, "risk": None,
+            # optional exit geometry overrides (None → engine defaults)
+            "stop_mult": None, "target_rr": None,
         }
         try:
             exec(self._code, ns)  # noqa: S102 - sandboxed: restricted builtins + source check
@@ -421,4 +437,6 @@ class CompiledStrategy:
                 chosen_risk = max(0.01, min(chosen_risk, 10.0))
         except (TypeError, ValueError):
             chosen_risk = None
+        self.last_stop_mult = _clamp(ns.get("stop_mult"), 0.3, 5.0)
+        self.last_target_rr = _clamp(ns.get("target_rr"), 0.2, 20.0)
         return decision, chosen_risk

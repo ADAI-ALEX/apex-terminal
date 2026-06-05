@@ -220,7 +220,10 @@ def run_backtest(
         # ── look for a new entry when flat ────────────────────────────
         if open_trade is None:
             if custom is not None:
-                sig = _custom_entry(market, candles, i, decision, sp, atr_stop_mult, rr, strategy_name)
+                # Snippet may override exit geometry (e.g. a far target to ride a trend).
+                eff_stop_mult = custom.last_stop_mult if custom.last_stop_mult is not None else atr_stop_mult
+                eff_rr = custom.last_target_rr if custom.last_target_rr is not None else rr
+                sig = _custom_entry(market, candles, i, decision, sp, eff_stop_mult, eff_rr, strategy_name)
             else:
                 window = candles[: i + 1]
                 snap = build_snapshot(market.key, market.epic, window, sp)
