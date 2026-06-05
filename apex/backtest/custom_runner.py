@@ -319,6 +319,9 @@ class CompiledStrategy:
         self, index: int, candles: Sequence[Candle], *,
         position: int = 0, bars_held: int = 0, equity: float = 100_000.0,
         risk_pct: float = 0.0, leverage: float = 0.0,
+        day_pnl_pct: float = 0.0, consec_losses: int = 0,
+        consec_wins: int = 0, trades_today: int = 0,
+        dd_from_peak_pct: float = 0.0, total_pnl_pct: float = 0.0,
     ) -> tuple[str | None, float | None]:
         """Return ``(decision, risk)`` for bar ``index``.
 
@@ -327,6 +330,10 @@ class CompiledStrategy:
         default). ``candles`` is the full history up to and including ``index``; the
         keyword args expose live state (``position`` 1/-1/0, ``bars_held``,
         ``equity``) and run parameters (``risk_pct`` default, ``leverage``).
+
+        For prop-firm risk control the snippet also sees ``day_pnl_pct`` (running
+        P&L since the start of the current calendar day, %), ``consec_losses`` /
+        ``consec_wins`` (current closed-trade streak) and ``trades_today``.
         """
         window = list(candles[max(0, index - LOOKBACK + 1) : index + 1])
         if not window:
@@ -338,12 +345,15 @@ class CompiledStrategy:
 
         # Markov regime sees a deeper (but still bounded, walk-forward) close
         # history so it can fit a stable transition matrix; only bars <= index.
-        m_closes = [c.close for c in candles[max(0, index + 1 - _MARKOV_SLICE) : index + 1]]
+        # Built lazily on first call so snippets that never use markov pay nothing.
+        _mc: list[list[float]] = []
 
         def markov(state_lookback: int = 20, bull_thr: float | None = None,
                    bear_thr: float | None = None, horizon: int = 1,
                    window: int = MARKOV_WINDOW, band: float = 0.5) -> Regime:
-            return compute_markov(m_closes, state_lookback, bull_thr, bear_thr,
+            if not _mc:
+                _mc.append([c.close for c in candles[max(0, index + 1 - _MARKOV_SLICE) : index + 1]])
+            return compute_markov(_mc[0], state_lookback, bull_thr, bear_thr,
                                   horizon, window, band)
 
         ns: dict[str, object] = {
@@ -372,6 +382,11 @@ class CompiledStrategy:
             # live strategy state + run parameters
             "position": int(position), "bars_held": int(bars_held), "equity": float(equity),
             "risk_pct": float(risk_pct), "leverage": float(leverage),
+            # prop-firm risk state: per-day (day_pnl_pct, streaks, trades_today)
+            # and account-level (dd_from_peak_pct, total_pnl_pct since inception)
+            "day_pnl_pct": float(day_pnl_pct), "consec_losses": int(consec_losses),
+            "consec_wins": int(consec_wins), "trades_today": int(trades_today),
+            "dd_from_peak_pct": float(dd_from_peak_pct), "total_pnl_pct": float(total_pnl_pct),
             # outputs (the snippet sets these)
             "signal": None, "risk": None,
         }
