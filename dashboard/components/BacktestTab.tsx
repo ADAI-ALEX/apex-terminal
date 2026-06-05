@@ -188,6 +188,7 @@ function SingleBacktest({
   const [minutes, setMinutes] = useState(1440);
   const [bars, setBars] = useState(1000);
   const [source, setSource] = useState<"local" | "live">("local");
+  const [applyCosts, setApplyCosts] = useState(true);
   const [running, setRunning] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
   const [result, setResult] = useState<Result | null>(null);
@@ -224,7 +225,7 @@ function SingleBacktest({
       return;
     }
     setRunning(true); setResult(null); setIdx(0); setPlaying(false); setProgress(8); setStatusMsg("Submitting backtest…");
-    const r = await submitBacktest({ market, minutes, bars, target_pct: 10, total_limit_pct: 10, strategy: strategyName, source }, setStatusMsg);
+    const r = await submitBacktest({ market, minutes, bars, target_pct: 10, total_limit_pct: 10, strategy: strategyName, source, apply_costs: applyCosts }, setStatusMsg);
     setProgress(100); setRunning(false); setStatusMsg("");
     setResult(r);
     if (!r.error && (r.candles?.length ?? 0) > 0) { setIdx(0); setPlaying(true); }
@@ -302,6 +303,15 @@ function SingleBacktest({
             </Field>
             <Field label="Timeframe"><Select value={String(minutes)} onChange={(v) => setMinutes(Number(v))} options={(source === "local" ? LOCAL_TF : LIVE_TF).map(([v, l]) => [String(v), l])} /></Field>
             <Field label="Bars"><NumberInput value={bars} onChange={setBars} step={source === "local" && minutes === 1440 ? 250 : 100} /></Field>
+            <Field label="Costs">
+              <button
+                onClick={() => setApplyCosts((v) => !v)}
+                title="Charge realistic spread + commission per trade (recommended)"
+                className={`h-9 rounded px-3 text-sm font-bold ${applyCosts ? "bg-up/20 text-up border border-up/50" : "bg-bg3 text-textmid border border-border"}`}
+              >
+                {applyCosts ? "✓ On" : "Off"}
+              </button>
+            </Field>
             <button onClick={run} disabled={running} className="btn-gold h-9 rounded px-6 text-sm font-bold">{running ? "Running…" : "Run backtest"}</button>
             {statusMsg && <span className="font-mono text-xs text-textmid">{statusMsg}</span>}
           </div>
