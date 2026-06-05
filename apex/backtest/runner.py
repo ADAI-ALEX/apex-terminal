@@ -86,6 +86,18 @@ def run_request(
         if len(candles) < 80:
             return {"error": "Not enough historical data — let the engine stream a bit, or seed local data."}
 
+        # Transaction costs ON by default (realistic). The UI may turn them off
+        # (apply_costs=false) or override the amount (cost_pips, in pips/points).
+        from apex.backtest.engine import cost_points_from_pips, default_cost_points
+
+        apply_costs = bool(req.get("apply_costs", True))
+        if not apply_costs:
+            cost_points = 0.0
+        elif req.get("cost_pips") is not None:
+            cost_points = cost_points_from_pips(market, float(req["cost_pips"]))
+        else:
+            cost_points = default_cost_points(market)
+
         result = run_backtest(
             candles, market,
             starting_equity=float(req.get("starting_equity", settings.starting_equity or 100_000.0)),
@@ -97,12 +109,15 @@ def run_request(
             rr=settings.risk.default_rr,
             strategy={"name": strat.name, "kind": strat.kind, "code": strat.code},
             exo=exo,
+            cost_points=cost_points,
         )
         data = result.to_dict()
         data["mode"] = "LOCAL" if use_local else broker.mode  # LOCAL = offline seed data
         data["minutes"] = minutes
         data["source"] = source
         data["strategy_label"] = strat.label
+        data["cost_points"] = cost_points
+        data["apply_costs"] = apply_costs
         return data
     except ValueError as exc:  # e.g. a custom strategy failed validation
         return {"error": str(exc)}

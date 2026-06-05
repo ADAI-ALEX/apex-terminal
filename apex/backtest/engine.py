@@ -79,6 +79,7 @@ def run_backtest(
     strategy: dict | None = None,
     exo: dict[str, list[float]] | None = None,
     rr: float = 1.8,
+    cost_points: float = 0.0,
 ) -> BacktestResult:
     """Replay ``candles`` through either the live strategy book (default) or a
     user-authored custom strategy.
@@ -121,7 +122,9 @@ def run_backtest(
     def _record_exit(ot: _OpenTrade, exit_price: float, reason: str, closed_iso: str) -> None:
         """Book a closed trade into all accumulators (shared by every exit path)."""
         nonlocal balance, wins, gross_win, gross_loss, rr_sum, consec_losses, consec_wins
-        pnl = ot.unrealised(exit_price)
+        # Subtract round-trip transaction cost (spread + commission), in price
+        # units × size — the realism that kills naive high-frequency scalps.
+        pnl = ot.unrealised(exit_price) - cost_points * ot.size
         balance += pnl
         ret = 100.0 * pnl / starting_equity
         trade_pnls.append(pnl)
@@ -299,6 +302,29 @@ _FX_KEYS = frozenset({"EURUSD", "GBPUSD"})
 
 def _min_stop_price(market: Market) -> float:
     return market.min_stop_points * (_FX_POINT if market.key in _FX_KEYS else 1.0)
+
+
+# Default round-trip transaction cost (spread + commission) in PRICE units, per
+# instrument, so website backtests are realistic by default. ~0.8 pip on FX
+# majors; a fraction of a point on indices; a few dollars on crypto.
+_DEFAULT_COST: dict[str, float] = {
+    "EURUSD": 0.00008, "GBPUSD": 0.00008,
+    "US500": 0.5, "FTSE100": 1.0, "NAS100": 1.0, "DAX40": 1.5,
+    "BTCUSD": 5.0, "ETHUSD": 0.5,
+}
+
+
+def default_cost_points(market: Market) -> float:
+    """Realistic round-trip cost (price units) for ``market`` — used when the UI
+    asks for costs but does not specify an amount."""
+    if market.key in _DEFAULT_COST:
+        return _DEFAULT_COST[market.key]
+    return _FX_POINT * 8.0 if market.key in _FX_KEYS else 0.5
+
+
+def cost_points_from_pips(market: Market, pips: float) -> float:
+    """Convert a UI-supplied cost in pips/points to price units for ``market``."""
+    return pips * (_FX_POINT if market.key in _FX_KEYS else 1.0)
 
 
 def _custom_entry(
