@@ -175,6 +175,19 @@ class _Indicators:
         var = sum((x - mean) ** 2 for x in w) / len(w)
         return self._v(var ** 0.5, None)
 
+    def vwap(self, period: int = 20) -> Val:
+        """Rolling volume-weighted average price over ``period`` bars (session-proxy
+        fair value). Falls back to SMA(close) if volume is unavailable/zero."""
+        def _calc(bars: list[Candle]) -> float | None:
+            if not bars:
+                return None
+            num = sum(((b.high + b.low + b.close) / 3.0) * (b.volume or 0.0) for b in bars)
+            den = sum((b.volume or 0.0) for b in bars)
+            if den <= 0:
+                return sum(b.close for b in bars) / len(bars)
+            return num / den
+        return self._v(_calc(self.candles[-period:]), _calc(self._prev_candles[-period:]))
+
 
 def crossover(a: object, b: object) -> bool:
     """True when ``a`` crosses **above** ``b`` on this bar."""
@@ -376,8 +389,12 @@ class CompiledStrategy:
             "adx": ctx.adx, "macd": ctx.macd, "bollinger": ctx.bollinger,
             "highest": ctx.highest, "lowest": ctx.lowest,
             "donchian": ctx.donchian, "roc": ctx.roc, "stdev": ctx.stdev,
+            "vwap": ctx.vwap,
             "crossover": crossover, "crossunder": crossunder,
             "markov": markov,  # hedge-fund regime engine → Regime(state, p_bull, ...)
+            # bar clock (UTC) for session filters
+            "hour": int(bar.time.hour), "minute": int(bar.time.minute),
+            "dow": int(bar.time.weekday()),
             "nan": math.nan, "isnan": math.isnan,
             # live strategy state + run parameters
             "position": int(position), "bars_held": int(bars_held), "equity": float(equity),
