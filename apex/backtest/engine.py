@@ -109,10 +109,18 @@ def run_backtest(
     equity_curve: list[dict] = []
     day_start_eq: dict[str, float] = {}
     day_min_eq: dict[str, float] = {}
+    # Live state exposed to custom snippets so they can manage prop-firm risk
+    # (daily-loss caps, drawdown-aware sizing, daily profit lock-in).
+    consec_losses = 0
+    consec_wins = 0
+    day_key: str | None = None
+    day_open_eq = starting_equity
+    trades_today = 0
+    run_peak = starting_equity
 
     def _record_exit(ot: _OpenTrade, exit_price: float, reason: str, closed_iso: str) -> None:
         """Book a closed trade into all accumulators (shared by every exit path)."""
-        nonlocal balance, wins, gross_win, gross_loss, rr_sum
+        nonlocal balance, wins, gross_win, gross_loss, rr_sum, consec_losses, consec_wins
         pnl = ot.unrealised(exit_price)
         balance += pnl
         ret = 100.0 * pnl / starting_equity
@@ -121,8 +129,12 @@ def run_backtest(
         if pnl >= 0:
             wins += 1
             gross_win += pnl
+            consec_wins += 1
+            consec_losses = 0
         else:
             gross_loss += -pnl
+            consec_losses += 1
+            consec_wins = 0
         risk_pts = abs(ot.entry - ot.stop)
         if risk_pts > 0:
             rr_sum += abs(exit_price - ot.entry) / risk_pts
@@ -147,9 +159,23 @@ def run_backtest(
                    else -1 if open_trade and open_trade.direction is Direction.SELL else 0)
             held = (i - open_trade.open_index) if open_trade else 0
             eq_now = balance + (open_trade.unrealised(bar.close) if open_trade else 0.0)
+            # Roll the trading day → reset the day-open equity + trade counter so
+            # the snippet can see today's running P&L and cap its daily loss.
+            if day != day_key:
+                day_key = day
+                day_open_eq = eq_now
+                trades_today = 0
+            day_pnl_pct = 100.0 * (eq_now - day_open_eq) / day_open_eq if day_open_eq else 0.0
+            # Account-level (since inception) state for a hard max-loss breaker.
+            run_peak = max(run_peak, eq_now)
+            dd_from_peak_pct = 100.0 * (run_peak - eq_now) / run_peak if run_peak else 0.0
+            total_pnl_pct = 100.0 * (eq_now - starting_equity) / starting_equity if starting_equity else 0.0
             decision, chosen_risk = custom.decide(
                 i, candles, position=pos, bars_held=held, equity=eq_now,
                 risk_pct=risk_pct, leverage=float(getattr(market, "fca_leverage", 0)),
+                day_pnl_pct=day_pnl_pct, consec_losses=consec_losses,
+                consec_wins=consec_wins, trades_today=trades_today,
+                dd_from_peak_pct=dd_from_peak_pct, total_pnl_pct=total_pnl_pct,
             )
         else:
             decision = None
@@ -207,6 +233,7 @@ def run_backtest(
                     target=sig.target, size=size, opened=bar.time.isoformat(),
                     strategy=sig.strategy, open_index=i,
                 )
+                trades_today += 1
 
     # close any trade still open at the end
     if open_trade is not None and candles:
@@ -261,6 +288,19 @@ def _best_signal(market: Market, snap, window):  # type: ignore[no-untyped-def]
     return max(candidates, key=lambda s: s.confidence) if candidates else None
 
 
+# Price change per broker "point" for the min-stop floor. Indices and crypto
+# quote 1 point = 1 price unit, but FX majors quote 1 point = 0.0001 — without
+# this, a 6-point FX min-stop is read as 6.0 price units (a ~6 *dollar* stop on a
+# 1.08 pair), which collapses position size to ~0. Backtest-only; the live
+# RiskEngine is untouched.
+_FX_POINT = 0.0001
+_FX_KEYS = frozenset({"EURUSD", "GBPUSD"})
+
+
+def _min_stop_price(market: Market) -> float:
+    return market.min_stop_points * (_FX_POINT if market.key in _FX_KEYS else 1.0)
+
+
 def _custom_entry(
     market: Market, candles: list[Candle], i: int, decision: str | None,
     sp: StrategyParams, atr_stop_mult: float, rr: float, strategy_name: str,
@@ -278,7 +318,7 @@ def _custom_entry(
     if not atr_val or atr_val <= 0:
         return None
     entry = candles[i].close
-    stop_dist = max(atr_val * atr_stop_mult, market.min_stop_points)
+    stop_dist = max(atr_val * atr_stop_mult, _min_stop_price(market))
     target_dist = stop_dist * rr
     direction = Direction.BUY if decision == "BUY" else Direction.SELL
     if direction is Direction.BUY:
