@@ -39,8 +39,9 @@ const STARTER = `# name: My Strategy
 # description: Describe what this algorithm does
 #
 # Runs once per bar. Set \`signal\` to "BUY", "SELL", "FLAT" or "HOLD".
-# Vars: open, high, low, close, volume, price, fear_and_greed, vix, sentiment
+# Vars: open, high, low, close, volume, price, fear_and_greed, vix, sentiment, hour
 # Fns:  sma(p) ema(p) rsi(p) macd() atr(p) adx(p) bollinger(p,s) highest(p) lowest(p)
+#       vwap(p) volume_profile(p) -> (poc,vah,val,lvn,width)  cvd(p)  markov(p)
 #       crossover(a,b) crossunder(a,b)
 
 upper, mid, lower = bollinger(20, 2)

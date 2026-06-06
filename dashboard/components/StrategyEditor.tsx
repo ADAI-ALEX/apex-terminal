@@ -31,9 +31,13 @@ const PY_KEYWORDS = new Set([
 const API_NAMES = new Set([
   "open", "high", "low", "close", "volume", "price", "fear_and_greed", "fear_greed",
   "vix", "sentiment", "sma", "ema", "rsi", "macd", "atr", "adx", "bollinger",
-  "highest", "lowest", "donchian", "roc", "stdev", "crossover", "crossunder",
-  "signal", "isnan", "nan", "i", "n",
+  "highest", "lowest", "donchian", "roc", "stdev", "vwap", "crossover", "crossunder",
+  "volume_profile", "cvd", "markov",
+  "signal", "risk", "stop_mult", "target_rr", "isnan", "nan", "i", "n",
+  "hour", "minute", "dow",
   "position", "bars_held", "equity", "risk_pct", "leverage",
+  "day_pnl_pct", "consec_losses", "consec_wins", "trades_today",
+  "dd_from_peak_pct", "total_pnl_pct",
 ]);
 
 const CHEATSHEET: { group: string; items: [string, string][] }[] = [
@@ -66,7 +70,26 @@ const CHEATSHEET: { group: string; items: [string, string][] }[] = [
       ["donchian(p)", "→ (upper, lower) highest/lowest close"],
       ["roc(n)", "close-to-close % return over n bars"],
       ["stdev(p)", "rolling volatility (std of closes)"],
+      ["vwap(p)", "rolling volume-weighted average price"],
       ["highest(p) lowest(p)", "rolling high / low"],
+    ],
+  },
+  {
+    group: "Auction & order flow",
+    items: [
+      ["volume_profile(p, bins)", "→ (poc, vah, val, lvn, width)"],
+      ["·  poc", "Point of Control — fair-value magnet"],
+      ["·  vah / val", "Value-Area High/Low (≈70% volume band)"],
+      ["·  lvn / width", "low-volume node / value-area width"],
+      ["cvd(p)", "cumulative volume delta (order-flow pressure)"],
+      ["markov(lookback)", "regime engine → (state, edge, p_bull, …)"],
+    ],
+  },
+  {
+    group: "Session clock (UTC)",
+    items: [
+      ["hour, minute", "bar time — e.g. 13≤hour<20 = New York"],
+      ["dow", "day of week (0=Mon … 4=Fri)"],
     ],
   },
   {
@@ -80,12 +103,24 @@ const CHEATSHEET: { group: string; items: [string, string][] }[] = [
     ],
   },
   {
+    group: "Prop-firm risk (FTMO)",
+    items: [
+      ["day_pnl_pct", "running P&L since the day opened (%)"],
+      ["dd_from_peak_pct", "drawdown from the equity peak (%)"],
+      ["total_pnl_pct", "P&L since inception (%)"],
+      ["consec_losses / wins", "current closed-trade streak"],
+      ["trades_today", "trades opened so far today"],
+    ],
+  },
+  {
     group: "Signals & logic",
     items: [
       ['signal = "BUY"', "open a long (ATR-sized)"],
       ['signal = "SELL"', "open a short"],
       ['signal = "FLAT"', "close any open position"],
       ['signal = "HOLD"', "do nothing; let SL/TP manage"],
+      ["risk = 0.5", "override this trade's risk % (optional)"],
+      ["stop_mult / target_rr", "override stop (×ATR) / reward:risk"],
       ["crossover(a, b)", "a crosses above b"],
       ["crossunder(a, b)", "a crosses below b"],
     ],

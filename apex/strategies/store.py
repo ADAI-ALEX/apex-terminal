@@ -46,7 +46,9 @@ STARTER_CODE = '''# name: My Strategy
 #   HOLD       -> do nothing; let the stop / target manage the trade
 # Available: open, high, low, close, volume, price, fear_and_greed, vix, sentiment,
 #            sma(p), ema(p), rsi(p), macd(), atr(p), bollinger(p, s), adx(p),
-#            crossover(a, b), crossunder(a, b), highest(p), lowest(p)
+#            crossover(a, b), crossunder(a, b), highest(p), lowest(p), vwap(p),
+#            volume_profile(p) -> (poc, vah, val, lvn, width), cvd(p), markov(p),
+#            hour/minute (UTC) for session filters
 
 upper, mid, lower = bollinger(20, 2)
 

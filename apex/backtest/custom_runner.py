@@ -36,6 +36,8 @@ LOOKBACK = 400
 MACD = namedtuple("MACD", ["line", "signal", "hist"])
 Boll = namedtuple("Boll", ["upper", "mid", "lower"])
 Donchian = namedtuple("Donchian", ["upper", "lower"])
+#: Auction map from a rolling volume-by-price profile (see ``_Indicators.volume_profile``).
+VProfile = namedtuple("VProfile", ["poc", "vah", "val", "lvn", "width"])
 
 # Tokens that must never appear in a user snippet (basic sandbox guard).
 _FORBIDDEN = (
@@ -197,6 +199,95 @@ class _Indicators:
                 return sum(b.close for b in bars) / len(bars)
             return num / den
         return self._v(_calc(self.candles[-period:]), _calc(self._prev_candles[-period:]))
+
+    def volume_profile(self, period: int = 120, bins: int = 30) -> VProfile:
+        """Volume-by-price **auction map** over the last ``period`` bars.
+
+        This is the heart of Auction Market Theory: where has the most *business*
+        been transacted? Each bar's volume is spread uniformly across its
+        ``[low, high]`` range into ``bins`` price buckets, then we read:
+
+          * ``poc``  — Point of Control: price of the highest-volume bucket (the
+            fair-value magnet; the market keeps returning to it).
+          * ``vah`` / ``val`` — Value-Area High / Low: the band around the POC
+            holding ~70% of total volume. Price **inside** ``[val, vah]`` is *in
+            balance*; price **outside** it is *out of balance* (the only place the
+            #1-scalper model takes a trade).
+          * ``lvn`` — Low-Volume Node: the thinnest bucket's price — a level the
+            market travels through quickly (a continuation gate / poor support).
+          * ``width`` — ``vah - val`` (how tight the current balance is).
+
+        Built from OHLCV only (no order book), so it works on every seeded series;
+        when volume is missing/zero it degrades to an equal-weight TPO profile.
+        """
+        bars = self.candles[-period:] if period > 0 else self.candles
+        if len(bars) < 3:
+            return VProfile(_nan_val(), _nan_val(), _nan_val(), _nan_val(), _nan_val())
+        lo = min(b.low for b in bars)
+        hi = max(b.high for b in bars)
+        if hi <= lo:
+            v = Val(lo)
+            return VProfile(v, v, v, v, Val(0.0))
+        nb = max(4, int(bins))
+        step = (hi - lo) / nb
+        vol = [0.0] * nb
+        for b in bars:
+            i0 = max(0, min(nb - 1, int((max(lo, b.low) - lo) / step)))
+            i1 = max(0, min(nb - 1, int((min(hi, b.high) - lo) / step)))
+            w = (b.volume or 0.0) or 1.0  # equal-weight when volume is absent
+            share = w / (i1 - i0 + 1)
+            for k in range(i0, i1 + 1):
+                vol[k] += share
+        total = sum(vol)
+        if total <= 0:
+            v = Val((hi + lo) / 2.0)
+            return VProfile(v, Val(hi), Val(lo), v, Val(hi - lo))
+        poc_i = max(range(nb), key=lambda k: vol[k])
+        lvn_i = min(range(nb), key=lambda k: vol[k])
+        # Grow the value area out from the POC, always taking the heavier neighbour,
+        # until it captures ~70% of total volume (the standard value-area rule).
+        lo_i = hi_i = poc_i
+        captured = vol[poc_i]
+        target = 0.70 * total
+        while captured < target and (lo_i > 0 or hi_i < nb - 1):
+            below = vol[lo_i - 1] if lo_i > 0 else -1.0
+            above = vol[hi_i + 1] if hi_i < nb - 1 else -1.0
+            if above >= below:
+                hi_i += 1
+                captured += vol[hi_i]
+            else:
+                lo_i -= 1
+                captured += vol[lo_i]
+        poc = lo + (poc_i + 0.5) * step
+        return VProfile(
+            Val(poc), Val(lo + (hi_i + 1) * step), Val(lo + lo_i * step),
+            Val(lo + (lvn_i + 0.5) * step), Val((hi_i - lo_i + 1) * step),
+        )
+
+    def _cvd_sum(self, bars: list[Candle]) -> float:
+        """Sum of per-bar volume deltas (close-location-value × volume)."""
+        d = 0.0
+        for b in bars:
+            rng = b.high - b.low
+            if rng <= 0:
+                continue
+            clv = (2.0 * b.close - b.high - b.low) / rng  # −1 (closed on low) … +1 (high)
+            d += clv * ((b.volume or 0.0) or 1.0)
+        return d
+
+    def cvd(self, period: int = 20) -> Val:
+        """**Cumulative Volume Delta** proxy over the last ``period`` bars — the
+        order-flow *pressure benchmark* the #1 scalper uses to read aggression.
+
+        With no tick/footprint feed we approximate each bar's delta as its
+        close-location-value (−1 if it closed on the low, +1 on the high) times
+        its volume: a close near the high on heavy volume = aggressive buyers, near
+        the low = aggressive sellers. Rising CVD = buyers leaning on the gas
+        (confirming an up move / time to protect a long sooner). Carries the
+        previous bar's value, so ``crossover(cvd(20), 0)`` and slope reads work.
+        """
+        return self._v(self._cvd_sum(self.candles[-period:]),
+                        self._cvd_sum(self._prev_candles[-period:]))
 
 
 def crossover(a: object, b: object) -> bool:
@@ -404,6 +495,8 @@ class CompiledStrategy:
             "highest": ctx.highest, "lowest": ctx.lowest,
             "donchian": ctx.donchian, "roc": ctx.roc, "stdev": ctx.stdev,
             "vwap": ctx.vwap,
+            # auction-market-theory toolkit: volume-by-price map + order-flow CVD
+            "volume_profile": ctx.volume_profile, "cvd": ctx.cvd,
             "crossover": crossover, "crossunder": crossunder,
             "markov": markov,  # hedge-fund regime engine → Regime(state, p_bull, ...)
             # bar clock (UTC) for session filters
