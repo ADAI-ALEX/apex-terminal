@@ -1007,12 +1007,110 @@ elif position == -1:
 '''
 
 
+def build_a1() -> str:
+    # Riptide v2 ADAPTIVE: markov regime switches the trading STYLE -
+    #  - strong up/down trend  -> MOMENTUM (breakout, ride) — catches fast moves
+    #  - trend + not flipping   -> MEAN-REVERSION dip/rip (the Riptide edge)
+    #  - regime flipping against a dip -> stand aside (avoids the falling knife)
+    return '''
+mk = markov(20, band=0.5, window=400)
+edge = mk.edge
+s200 = sma(200)
+s50 = sma(50)
+s20 = sma(20)
+s5 = sma(5)
+adx_v = adx(14)
+r = rsi(2)
+hh = highest(20)
+ll = lowest(20)
+
+trend_up = close > s200 and s50 > s200
+trend_dn = close < s200 and s50 < s200
+strong_up = trend_up and edge > 0.10 and adx_v > 18
+strong_dn = trend_dn and edge < -0.10 and adx_v > 18
+
+day_locked = day_pnl_pct <= -3.0
+mult = 0.5 if dd_from_peak_pct >= 5.0 else 1.0
+
+signal = "HOLD"
+if position == 0 and not day_locked:
+    if strong_up and close > hh.prev:
+        risk = round(min(1.5 * mult, 2.0), 2)
+        signal = "BUY"
+    elif strong_dn and close < ll.prev:
+        risk = round(min(1.5 * mult, 2.0), 2)
+        signal = "SELL"
+    elif trend_up and edge > -0.05 and r < 15:
+        risk = round(min((1.2 + (15 - r) * 0.08) * mult, 2.0), 2)
+        signal = "BUY"
+    elif trend_dn and edge < 0.05 and r > 85:
+        risk = round(min((1.2 + (r - 85) * 0.08) * mult, 2.0), 2)
+        signal = "SELL"
+elif position == 1:
+    if strong_up:
+        if close < s20 or edge < -0.05:
+            signal = "FLAT"
+    elif r > 65 or close > s5 or bars_held > 10:
+        signal = "FLAT"
+elif position == -1:
+    if strong_dn:
+        if close > s20 or edge > 0.05:
+            signal = "FLAT"
+    elif r < 35 or close < s5 or bars_held > 10:
+        signal = "FLAT"
+'''
+
+
+def build_a2() -> str:
+    # a1 refined: breakout (momentum) in ANY confirmed trend (not just strong-
+    # markov) so it actually trades grind-ups/downs; looser MR dip (r<20) still
+    # blocked when the regime flips against it. Ride to an EMA20 break.
+    return '''
+mk = markov(20, band=0.5, window=400)
+edge = mk.edge
+s200 = sma(200)
+s50 = sma(50)
+s20 = sma(20)
+adx_v = adx(14)
+r = rsi(2)
+hh = highest(20)
+ll = lowest(20)
+
+trend_up = close > s200 and s50 > s200
+trend_dn = close < s200 and s50 < s200
+
+day_locked = day_pnl_pct <= -3.0
+mult = 0.5 if dd_from_peak_pct >= 5.0 else 1.0
+
+signal = "HOLD"
+if position == 0 and not day_locked:
+    if trend_up and close > hh.prev:
+        risk = round(min(1.5 * mult, 2.0), 2)
+        signal = "BUY"
+    elif trend_dn and close < ll.prev:
+        risk = round(min(1.5 * mult, 2.0), 2)
+        signal = "SELL"
+    elif trend_up and edge > -0.05 and r < 20:
+        risk = round(min((1.0 + (20 - r) * 0.05) * mult, 2.0), 2)
+        signal = "BUY"
+    elif trend_dn and edge < 0.05 and r > 80:
+        risk = round(min((1.0 + (r - 80) * 0.05) * mult, 2.0), 2)
+        signal = "SELL"
+elif position == 1:
+    if close < s20 or r > 70 or bars_held > 15:
+        signal = "FLAT"
+elif position == -1:
+    if close > s20 or r < 30 or bars_held > 15:
+        signal = "FLAT"
+'''
+
+
 BUILDS = {"v1": build_v1, "v2": build_v2, "v3": build_v3,
           "v4": build_v4, "v5": build_v5, "v6": build_v6, "v7": build_v7,
           "v2a": build_v2a, "v2b": build_v2b, "v2c": build_v2c, "m1": build_m1,
           "s1": build_s1, "s2": build_s2, "s3": build_s3, "s4": build_s4,
           "p1": build_p1, "p2": build_p2, "s5": build_s5, "t1": build_t1,
-          "t2": build_t2, "t3": build_t3}
+          "t2": build_t2, "t3": build_t3, "a1": build_a1, "a2": build_a2}
 
 if __name__ == "__main__":
     ver = sys.argv[1] if len(sys.argv) > 1 else "v7"
@@ -1039,6 +1137,11 @@ if __name__ == "__main__":
         show(ver, code, DAILY, "EURUSD", 1440)
     if which == "usdaily":
         show(ver, code, DAILY, "US500", 1440)
+    if which == "usdailyx":
+        show(ver, code, DAILY + [
+            ("2026", "2026-01-01", None),
+            ("2026 MarJun", "2026-03-01", None),
+        ], "US500", 1440)
     if which in ("us60", "us60x", "nas60x"):
         wins = US_DEEP if which == "us60" else (US_DEEP + [
             ("2026Q1", "2026-01-01", "2026-04-01"),
