@@ -17,7 +17,7 @@ type Result = {
 };
 
 const MARKETS = ["US500", "NAS100", "EURUSD", "GBPUSD", "FTSE100", "DAX40"];
-const LOCAL_INSTRUMENTS = ["US500", "FTSE100", "EURUSD", "BTCUSD", "ETHUSD"]; // local offline data
+const LOCAL_INSTRUMENTS = ["US500", "NAS100", "XAUUSD", "BTCUSD", "ETHUSD", "FTSE100", "EURUSD"]; // local offline data
 const LOCAL_MARKETS = new Set(LOCAL_INSTRUMENTS);
 const LIVE_TF: [number, string][] = [[5, "5m"], [15, "15m"], [30, "30m"], [60, "1h"]];
 const LOCAL_TF: [number, string][] = [[1440, "Daily"], [60, "1h"], [15, "15m"], [5, "5m"]];
@@ -424,7 +424,7 @@ function SingleBacktest({
               ? <EquityChart equity={equity} candles={candles} idx={idx} startEq={startEq} />
               : <div className="flex h-full items-center justify-center px-4 text-center font-mono text-[11px] text-textdim">Equity grows here as the replay runs.</div>}
           </div>
-          {source === "local" && <div className="border-t border-border px-3 py-2 font-mono text-[9px] leading-snug text-textdim">Offline {tfLabel(minutes)} · US500/FTSE100/EURUSD/BTC/ETH · daily 20y, intraday shallower. Algorithm sets its own risk %.</div>}
+          {source === "local" && <div className="border-t border-border px-3 py-2 font-mono text-[9px] leading-snug text-textdim">Offline {tfLabel(minutes)} · US500/NAS100/XAUUSD/BTC/ETH/FTSE100/EURUSD · clean data + costs. Algorithm sets its own risk %.</div>}
         </div>
       </aside>
     </div>
