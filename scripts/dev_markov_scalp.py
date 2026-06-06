@@ -22,7 +22,12 @@ logger.remove()
 from apex.backtest import dataset  # noqa: E402
 from apex.backtest.engine import run_backtest  # noqa: E402
 from apex.backtest.runner import LOCAL_BACKTEST_MARKETS  # noqa: E402
-from apex.config import MARKETS, get_settings  # noqa: E402
+from apex.config import MARKETS, Market, Regime, get_settings  # noqa: E402
+
+# Harness-local markets for instruments not in the live universe (Dukascopy data).
+_LOCAL_MK = {
+    "XAUUSD": Market("XAUUSD", "Gold", "CMD.XAUUSD", 1.0, 30, "00:00", "23:59", Regime.TRENDING, 0.3),
+}
 
 _CACHE: dict = {}
 
@@ -34,7 +39,7 @@ def full(key: str, tf: str):
 
 
 def market_for(key: str):
-    return MARKETS.get(key) or LOCAL_BACKTEST_MARKETS.get(key)
+    return MARKETS.get(key) or LOCAL_BACKTEST_MARKETS.get(key) or _LOCAL_MK.get(key)
 
 
 def _slice(series, start, end):
@@ -65,15 +70,17 @@ def linearity(eq: list[dict]) -> float:
     return round((sxy * sxy) / (sxx * syy), 3)
 
 
-# Realistic round-trip transaction cost (spread + commission). FX majors ~0.8 pip
-# all-in on a raw/prop account; this is the realism that kills naive scalping.
-COST_PIPS = 0.8
+# Realistic round-trip transaction cost (spread + commission) in PRICE units, per
+# instrument (raw/prop account). Big-move trend trades barely feel these.
+_COST = {
+    "EURUSD": 0.00008, "GBPUSD": 0.00008, "USDJPY": 0.012,
+    "US500": 0.5, "NAS100": 2.0, "US2000": 0.5,
+    "BTCUSD": 30.0, "ETHUSD": 2.0, "XAUUSD": 0.4, "USOIL": 0.05,
+}
 
 
 def _cost_points(key: str) -> float:
-    if key in ("EURUSD", "GBPUSD"):
-        return COST_PIPS * 0.0001       # 1 pip = 0.0001 price
-    return COST_PIPS * 1.0              # indices/crypto: ~points
+    return _COST.get(key, 0.5)
 
 
 def run(code: str, key: str, tf_min: int, start=None, end=None) -> dict:
@@ -1105,12 +1112,113 @@ elif position == -1:
 '''
 
 
+def build_tf() -> str:
+    # Turtle / time-series-momentum trend-follower (the real CTA edge). 20-day
+    # breakout entry (both directions -> catches up AND down trends), 10-day
+    # opposite-extreme TRAILING exit so winners run for weeks (R:R naturally > 2),
+    # wide ATR stop backstop. target_rr far so the trail manages the exit.
+    return '''
+hh20 = highest(20)
+ll20 = lowest(20)
+hh10 = highest(10)
+ll10 = lowest(10)
+a = atr(14)
+
+day_locked = day_pnl_pct <= -4.0
+mult = 0.5 if dd_from_peak_pct >= 6.0 else 1.0
+
+stop_mult = 2.5
+target_rr = 20.0
+risk = round(1.5 * mult, 2)
+
+signal = "HOLD"
+if position == 0 and not day_locked:
+    if close > hh20.prev:
+        signal = "BUY"
+    elif close < ll20.prev:
+        signal = "SELL"
+elif position == 1:
+    if close < ll10.prev:
+        signal = "FLAT"
+elif position == -1:
+    if close > hh10.prev:
+        signal = "FLAT"
+'''
+
+
+def build_tf3() -> str:
+    # tf2 at balanced 1.5% risk with TIERED drawdown-throttle (halve at 5%,
+    # quarter at 7.5%) so total DD self-limits well inside FTMO's 10%.
+    return '''
+hh40 = highest(40)
+ll40 = lowest(40)
+hh20 = highest(20)
+ll20 = lowest(20)
+
+day_locked = day_pnl_pct <= -4.0
+mult = 1.0
+if dd_from_peak_pct >= 7.5:
+    mult = 0.25
+elif dd_from_peak_pct >= 5.0:
+    mult = 0.5
+
+stop_mult = 3.0
+target_rr = 30.0
+risk = round(1.5 * mult, 2)
+
+signal = "HOLD"
+if position == 0 and not day_locked:
+    if close > hh40.prev:
+        signal = "BUY"
+    elif close < ll40.prev:
+        signal = "SELL"
+elif position == 1:
+    if close < ll20.prev:
+        signal = "FLAT"
+elif position == -1:
+    if close > hh20.prev:
+        signal = "FLAT"
+'''
+
+
+def build_tf2() -> str:
+    # SLOWER trend system for higher R:R + lower DD: 40-day breakout entry,
+    # 20-day trailing exit (rides major trends far), 3-ATR stop, 1% risk.
+    return '''
+hh40 = highest(40)
+ll40 = lowest(40)
+hh20 = highest(20)
+ll20 = lowest(20)
+
+day_locked = day_pnl_pct <= -4.0
+mult = 0.5 if dd_from_peak_pct >= 6.0 else 1.0
+
+stop_mult = 3.0
+target_rr = 30.0
+risk = round(1.0 * mult, 2)
+
+signal = "HOLD"
+if position == 0 and not day_locked:
+    if close > hh40.prev:
+        signal = "BUY"
+    elif close < ll40.prev:
+        signal = "SELL"
+elif position == 1:
+    if close < ll20.prev:
+        signal = "FLAT"
+elif position == -1:
+    if close > hh20.prev:
+        signal = "FLAT"
+'''
+
+
 BUILDS = {"v1": build_v1, "v2": build_v2, "v3": build_v3,
           "v4": build_v4, "v5": build_v5, "v6": build_v6, "v7": build_v7,
           "v2a": build_v2a, "v2b": build_v2b, "v2c": build_v2c, "m1": build_m1,
           "s1": build_s1, "s2": build_s2, "s3": build_s3, "s4": build_s4,
           "p1": build_p1, "p2": build_p2, "s5": build_s5, "t1": build_t1,
-          "t2": build_t2, "t3": build_t3, "a1": build_a1, "a2": build_a2}
+          "t2": build_t2, "t3": build_t3, "a1": build_a1, "a2": build_a2,
+          "tf": build_tf, "tf2": build_tf2, "tf3": build_tf3}
 
 if __name__ == "__main__":
     ver = sys.argv[1] if len(sys.argv) > 1 else "v7"
@@ -1135,6 +1243,11 @@ if __name__ == "__main__":
         show(ver, code, EUR_DEEP, "EURUSD", 60)
     if which == "eurdaily":
         show(ver, code, DAILY, "EURUSD", 1440)
+    if which == "trend":
+        tw = [("ALL", None, None), ("2017-2019", "2017-01-01", "2020-01-01"),
+              ("2020-2022", "2020-01-01", "2023-01-01"), ("2023-2026", "2023-01-01", None)]
+        for k in ("BTCUSD", "NAS100", "XAUUSD"):
+            show(ver, code, tw, k, 1440)
     if which == "usdaily":
         show(ver, code, DAILY, "US500", 1440)
     if which == "usdailyx":

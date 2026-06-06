@@ -33,6 +33,7 @@ from apex.strategies import store as strategy_store
 LOCAL_BACKTEST_MARKETS: dict[str, Market] = {
     "BTCUSD": Market("BTCUSD", "Bitcoin", "BACKTEST.BTCUSD", 1.0, 2, "00:00", "23:59", Regime.VOLATILE, 1.0),
     "ETHUSD": Market("ETHUSD", "Ethereum", "BACKTEST.ETHUSD", 1.0, 2, "00:00", "23:59", Regime.VOLATILE, 1.0),
+    "XAUUSD": Market("XAUUSD", "Gold", "BACKTEST.XAUUSD", 1.0, 30, "00:00", "23:59", Regime.TRENDING, 0.3),
 }
 
 

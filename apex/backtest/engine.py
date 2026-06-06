@@ -313,7 +313,7 @@ def _min_stop_price(market: Market) -> float:
 _DEFAULT_COST: dict[str, float] = {
     "EURUSD": 0.00008, "GBPUSD": 0.00008,
     "US500": 0.5, "FTSE100": 1.0, "NAS100": 1.0, "DAX40": 1.5,
-    "BTCUSD": 5.0, "ETHUSD": 0.5,
+    "BTCUSD": 30.0, "ETHUSD": 2.0, "XAUUSD": 0.4, "NAS100": 2.0,
 }
 
 
