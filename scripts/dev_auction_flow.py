@@ -171,21 +171,23 @@ def sweep() -> None:
 V1_FILE = STRATEGY_FILE
 V2_FILE = STRATEGY_FILE.parent / "auction_flow_v2.py"
 V3_FILE = STRATEGY_FILE.parent / "auction_flow_v3.py"
+V4_FILE = STRATEGY_FILE.parent / "auction_flow_v4.py"
 
 
 def compare(key: str = "US500", bars: int = 10000) -> None:
-    """Side-by-side V1 vs V2 vs V3 over the most recent ``bars`` candles (costs ON)."""
+    """Side-by-side V1..V4 over the most recent ``bars`` candles (costs ON)."""
     s = full(key, "60m")
     cs = s.candles[-bars:]
     exo = {n: v[-bars:] for n, v in s.exo.items()}
     span = f"{cs[0].time.isoformat()[:10]} -> {cs[-1].time.isoformat()[:10]}"
-    print(f"\n=== V1 vs V2 vs V3 — {key} 60m, last {len(cs)} bars ({span}), costs ON ===")
+    print(f"\n=== V1..V4 — {key} 60m, last {len(cs)} bars ({span}), costs ON ===")
     print("%-28s %8s %7s %6s %6s %8s %8s" % (
         "strategy", "return%", "trades", "win%", "PF", "maxDayDD", "maxTotDD"))
     st = get_settings()
     variants = (("Auction Flow V1", V1_FILE),
                 ("Auction Flow V2 (Challenge)", V2_FILE),
-                ("Auction Flow V3 (Max Util)", V3_FILE))
+                ("Auction Flow V3 (Max Util)", V3_FILE),
+                ("Auction Flow V4 (Max Risk)", V4_FILE))
     for label, path in variants:
         code = path.read_text(encoding="utf-8")
         r = run_backtest(
