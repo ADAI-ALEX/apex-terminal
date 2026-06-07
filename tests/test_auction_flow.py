@@ -291,6 +291,24 @@ def test_v5_1_hybrid_long_only_and_breaker():
     assert d == "FLAT"                                 # -3.2% hard daily breaker
 
 
+def test_v5_2_scaled_long_only_and_band():
+    """V5.2-Scaled: long-only, -3.2% breaker, sizing in the raised 1.5–2.3% band."""
+    meta = store.get("auction_flow_v5_2_scaled")
+    assert meta is not None, "auction_flow_v5_2_scaled strategy file must exist"
+    strat = CompiledStrategy(meta.code)
+    candles = _make_series(500)
+    risks, decisions = [], set()
+    for i in range(60, len(candles)):
+        d, r = strat.decide(i, candles, position=0)
+        decisions.add(d)
+        if r is not None:
+            risks.append(r)
+    assert "SELL" not in decisions
+    assert risks and 1.5 <= min(risks) and max(risks) <= 2.3
+    d, _ = strat.decide(300, candles, position=1, day_pnl_pct=-3.3)
+    assert d == "FLAT"
+
+
 def test_v4_long_only_divergence_tilt_sizing():
     """V4 (Max Risk): long-only, 1.2–2.2% divergence-tilted sizing, -3.2% breaker."""
     meta = store.get("auction_flow_v4")
