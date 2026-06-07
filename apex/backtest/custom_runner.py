@@ -289,6 +289,43 @@ class _Indicators:
         return self._v(self._cvd_sum(self.candles[-period:]),
                         self._cvd_sum(self._prev_candles[-period:]))
 
+    def cvd_divergence(self, lookback: int = 12) -> int:
+        """Regular **CVD divergence** over the last ``lookback`` bars — the order-flow
+        "exhaustion" read. Builds the cumulative-volume-delta line across the window
+        and compares the two price extremes against the CVD line at those points:
+
+          * ``+1`` BULLISH — price prints a LOWER low but CVD prints a HIGHER low:
+            sellers are exhausting into the new low (a high-quality long trigger).
+          * ``-1`` BEARISH — price prints a HIGHER high but CVD a LOWER high.
+          * ``0``  — no divergence.
+
+        Computed on whatever series is loaded. On a 1H backtest it reads the 1H CVD
+        sub-structure; for live use, feed it the lower-timeframe (e.g. 15m) bars to
+        confirm a higher-timeframe entry. (The seeded intraday history is only deep
+        enough on the 1H series, so backtests run the divergence there.)
+        """
+        bars = self.candles[-lookback:]
+        n = len(bars)
+        if n < 6:
+            return 0
+        cum = 0.0
+        line: list[float] = []
+        for b in bars:
+            rng = b.high - b.low
+            clv = (2.0 * b.close - b.high - b.low) / rng if rng > 0 else 0.0
+            cum += clv * ((b.volume or 0.0) or 1.0)
+            line.append(cum)
+        half = n // 2
+        lo_old = min(range(0, half), key=lambda k: bars[k].low)
+        lo_new = min(range(half, n), key=lambda k: bars[k].low)
+        if bars[lo_new].low < bars[lo_old].low and line[lo_new] > line[lo_old]:
+            return 1
+        hi_old = max(range(0, half), key=lambda k: bars[k].high)
+        hi_new = max(range(half, n), key=lambda k: bars[k].high)
+        if bars[hi_new].high > bars[hi_old].high and line[hi_new] < line[hi_old]:
+            return -1
+        return 0
+
 
 def crossover(a: object, b: object) -> bool:
     """True when ``a`` crosses **above** ``b`` on this bar."""
@@ -503,6 +540,7 @@ class CompiledStrategy:
             "vwap": ctx.vwap,
             # auction-market-theory toolkit: volume-by-price map + order-flow CVD
             "volume_profile": ctx.volume_profile, "cvd": ctx.cvd,
+            "cvd_divergence": ctx.cvd_divergence,
             "crossover": crossover, "crossunder": crossunder,
             "markov": markov,  # hedge-fund regime engine → Regime(state, p_bull, ...)
             # bar clock (UTC) for session filters

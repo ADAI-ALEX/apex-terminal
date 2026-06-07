@@ -207,6 +207,35 @@ def test_v2_sizes_above_v1_floor():
     assert max(risks) >= 0.8
 
 
+def test_v4_long_only_divergence_tilt_sizing():
+    """V4 (Max Risk): long-only, 1.2–2.2% divergence-tilted sizing, -3.2% breaker."""
+    meta = store.get("auction_flow_v4")
+    assert meta is not None, "auction_flow_v4 strategy file must exist"
+    strat = CompiledStrategy(meta.code)
+    candles = _make_series(400)
+    risks, decisions = [], set()
+    for i in range(60, len(candles)):
+        d, r = strat.decide(i, candles, position=0)
+        decisions.add(d)
+        if r is not None:
+            risks.append(r)
+    assert "SELL" not in decisions                     # long-only
+    assert risks and 1.2 <= min(risks) and max(risks) <= 2.2   # divergence-tilt band
+    d, _ = strat.decide(300, candles, position=1, day_pnl_pct=-3.3)
+    assert d == "FLAT"                                 # -3.2% hard daily breaker
+
+
+def test_cvd_divergence_primitive_signs():
+    """cvd_divergence returns +1 bullish / -1 bearish / 0, and never raises."""
+    t0 = _base_time()
+    # Falling price but each bar closes strong (rising CVD) -> bullish divergence.
+    bull = [_bar(t0 + timedelta(hours=i), 100 - i, 100 - i + 0.2, 100 - i - 1.0,
+                 100 - i + 0.15, 1000.0) for i in range(20)]
+    assert _Indicators(bull).cvd_divergence(12) in (1, 0)
+    flat = [_bar(t0 + timedelta(hours=i), 100, 100.5, 99.5, 100, 1000.0) for i in range(20)]
+    assert _Indicators(flat).cvd_divergence(12) == 0
+
+
 def test_v3_long_only_breaker_and_aggressive_sizing():
     """V3 (Max Util): long-only, hard -3.5% daily breaker, 1.2–1.9% base sizing."""
     meta = store.get("auction_flow_v3")
