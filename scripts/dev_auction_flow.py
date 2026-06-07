@@ -168,10 +168,48 @@ def sweep() -> None:
             nas["max_total_dd_pct"], us["max_total_dd_pct"]), flush=True)
 
 
+V1_FILE = STRATEGY_FILE
+V2_FILE = STRATEGY_FILE.parent / "auction_flow_v2.py"
+V3_FILE = STRATEGY_FILE.parent / "auction_flow_v3.py"
+
+
+def compare(key: str = "US500", bars: int = 10000) -> None:
+    """Side-by-side V1 vs V2 vs V3 over the most recent ``bars`` candles (costs ON)."""
+    s = full(key, "60m")
+    cs = s.candles[-bars:]
+    exo = {n: v[-bars:] for n, v in s.exo.items()}
+    span = f"{cs[0].time.isoformat()[:10]} -> {cs[-1].time.isoformat()[:10]}"
+    print(f"\n=== V1 vs V2 vs V3 — {key} 60m, last {len(cs)} bars ({span}), costs ON ===")
+    print("%-28s %8s %7s %6s %6s %8s %8s" % (
+        "strategy", "return%", "trades", "win%", "PF", "maxDayDD", "maxTotDD"))
+    st = get_settings()
+    variants = (("Auction Flow V1", V1_FILE),
+                ("Auction Flow V2 (Challenge)", V2_FILE),
+                ("Auction Flow V3 (Max Util)", V3_FILE))
+    for label, path in variants:
+        code = path.read_text(encoding="utf-8")
+        r = run_backtest(
+            cs, market_for(key), starting_equity=100_000.0,
+            risk_pct=st.risk.max_risk_per_trade_pct, atr_stop_mult=st.risk.atr_stop_multiplier,
+            params=st.strategy, mc_runs=400, target_pct=10.0, total_limit_pct=10.0,
+            rr=st.risk.default_rr, strategy={"name": label, "kind": "custom", "code": code},
+            exo=exo, cost_points=_COST.get(key, 0.5),
+        ).to_dict()
+        print("%-28s %8.2f %7d %6.1f %6.2f %8.2f %8.2f" % (
+            label, r["total_return_pct"], r["trades"], r["win_rate"], r["profit_factor"],
+            r["max_daily_dd_pct"], r["max_total_dd_pct"]))
+        mc = r.get("monte_carlo", {})
+        print("    MC P(+10%% before -10%%): %s%%   breach: %s%%   expectancy/trade: %s%%" % (
+            mc.get("pass_prob_pct", "-"), mc.get("breach_prob_pct", "-"), r["expectancy_pct"]))
+
+
 def main() -> None:
     which = (sys.argv[1].lower() if len(sys.argv) > 1 else "both")
     if which == "sweep":
         sweep()
+        return
+    if which == "compare":
+        compare()
         return
     code = STRATEGY_FILE.read_text(encoding="utf-8")
     keys = {"nas100": ["NAS100"], "us500": ["US500"], "both": ["NAS100", "US500"]}.get(which, ["NAS100", "US500"])

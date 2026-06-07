@@ -135,3 +135,96 @@ def test_auction_flow_compiles_and_runs_without_crashing():
         decision, risk = strat.decide(i, candles, position=0, equity=100_000.0)
         assert decision in (None, "BUY", "SELL", "FLAT")
         assert risk is None or 0.0 < risk <= 10.0
+
+
+# ── two-stage exit (scale-out + break-even) engine path ──────────────────────
+def test_runner_exposes_scale_outputs():
+    """A snippet can request a partial scale-out via scale_at / scale_frac / scale_be."""
+    strat = CompiledStrategy(
+        "signal = 'BUY'\nscale_at = 123.5\nscale_frac = 0.5\nscale_be = True\n"
+    )
+    candles = _make_series(120)
+    strat.decide(100, candles, position=0)
+    assert strat.last_scale_price == 123.5
+    assert strat.last_scale_frac == 0.5
+    assert strat.last_scale_be is True
+
+
+def test_scale_out_books_one_combined_trade():
+    """Scaling 50% out at the POC then exiting the rest books a SCALE leg plus a
+    single combined trade — and the engine never crashes on the partial path."""
+    from apex.backtest.engine import run_backtest
+    from apex.config import MARKETS
+
+    t0 = _base_time()
+    # Steadily rising series so a long reaches its scale level then its target.
+    candles = [_bar(t0 + timedelta(hours=i), 100 + i, 101.5 + i, 99.5 + i, 100.8 + i, 1000.0)
+               for i in range(200)]
+    code = (
+        "if position == 0 and i == 80:\n"
+        "    signal = 'BUY'\n"
+        "    stop_mult = 2.0\n"
+        "    target_rr = 6.0\n"
+        "    scale_at = close + 3.0\n"
+        "    scale_frac = 0.5\n"
+        "    scale_be = True\n"
+    )
+    res = run_backtest(candles, MARKETS["US500"], warmup=60,
+                       strategy={"name": "scaletest", "kind": "custom", "code": code},
+                       mc_runs=0, cost_points=0.0).to_dict()
+    reasons = [t["reason"] for t in res["trade_log"]]
+    assert "SCALE" in reasons                       # the partial leg was booked
+    assert res["trades"] == 1                        # but it is one combined trade
+    assert res["total_return_pct"] > 0               # rising market -> profitable long
+
+
+def test_v2_is_long_only_and_breaker_flattens():
+    """V2 (Challenge Mode) keeps the long-only bias and the hard daily breaker."""
+    meta = store.get("auction_flow_v2")
+    assert meta is not None, "auction_flow_v2 strategy file must exist"
+    strat = CompiledStrategy(meta.code)
+    candles = _make_series(400)
+    decisions = set()
+    for i in range(60, len(candles)):
+        decision, _ = strat.decide(i, candles, position=0)
+        decisions.add(decision)
+    assert "SELL" not in decisions
+    # Day down past -2.5% with an open long -> hard circuit breaker flattens.
+    decision, _ = strat.decide(300, candles, position=1, day_pnl_pct=-2.6)
+    assert decision == "FLAT"
+
+
+def test_v2_sizes_above_v1_floor():
+    """V2's dynamic base risk lives in the 0.8–1.25% band (vs V1's 0.45%)."""
+    meta = store.get("auction_flow_v2")
+    assert meta is not None
+    strat = CompiledStrategy(meta.code)
+    candles = _make_series(400)
+    risks = [r for i in range(60, len(candles))
+             for d, r in [strat.decide(i, candles, position=0)] if r is not None]
+    # Whenever V2 sizes a trade it is at least the 0.8% floor (drawdown-throttle aside).
+    assert risks, "expected at least one sized entry"
+    assert max(risks) >= 0.8
+
+
+def test_v3_long_only_breaker_and_aggressive_sizing():
+    """V3 (Max Util): long-only, hard -3.5% daily breaker, 1.2–1.9% base sizing."""
+    meta = store.get("auction_flow_v3")
+    assert meta is not None, "auction_flow_v3 strategy file must exist"
+    strat = CompiledStrategy(meta.code)
+    candles = _make_series(400)
+    risks, decisions = [], set()
+    for i in range(60, len(candles)):
+        d, r = strat.decide(i, candles, position=0)
+        decisions.add(d)
+        if r is not None:
+            risks.append(r)
+    assert "SELL" not in decisions                     # long-only
+    assert max(risks) >= 1.2                            # aggressive base sizing
+    assert max(risks) <= 1.9                            # but capped at the ceiling
+    # Day down past -3.5% with an open long -> hard circuit breaker flattens.
+    d, _ = strat.decide(300, candles, position=1, day_pnl_pct=-3.6)
+    assert d == "FLAT"
+    # ... but at -3.0% (inside the breaker) it does NOT force a flatten.
+    d2, _ = strat.decide(300, candles, position=1, day_pnl_pct=-3.0)
+    assert d2 != "FLAT"
