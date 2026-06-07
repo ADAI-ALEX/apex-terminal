@@ -432,6 +432,12 @@ class CompiledStrategy:
         # defaults). Lets a trend strategy push the target far and ride a winner.
         self.last_stop_mult: float | None = None
         self.last_target_rr: float | None = None
+        # Optional two-stage exit: scale ``last_scale_frac`` of the position out when
+        # price reaches ``last_scale_price`` (an absolute level, e.g. the POC) and, if
+        # ``last_scale_be``, move the stop to break-even. None/0 → plain SL/TP.
+        self.last_scale_price: float | None = None
+        self.last_scale_frac: float = 0.0
+        self.last_scale_be: bool = False
 
     def decide(
         self, index: int, candles: Sequence[Candle], *,
@@ -515,6 +521,8 @@ class CompiledStrategy:
             "signal": None, "risk": None,
             # optional exit geometry overrides (None → engine defaults)
             "stop_mult": None, "target_rr": None,
+            # optional two-stage exit (scale a fraction out at a price, BE the rest)
+            "scale_at": None, "scale_frac": None, "scale_be": None,
         }
         try:
             exec(self._code, ns)  # noqa: S102 - sandboxed: restricted builtins + source check
@@ -532,4 +540,12 @@ class CompiledStrategy:
             chosen_risk = None
         self.last_stop_mult = _clamp(ns.get("stop_mult"), 0.3, 5.0)
         self.last_target_rr = _clamp(ns.get("target_rr"), 0.2, 20.0)
+        # Two-stage exit overrides: a raw price level + the fraction to scale there.
+        sp_raw = ns.get("scale_at")
+        try:
+            self.last_scale_price = float(sp_raw) if sp_raw is not None else None  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            self.last_scale_price = None
+        self.last_scale_frac = _clamp(ns.get("scale_frac"), 0.0, 0.95) or 0.0
+        self.last_scale_be = bool(ns.get("scale_be"))
         return decision, chosen_risk

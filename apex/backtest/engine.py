@@ -33,6 +33,22 @@ class _OpenTrade:
     opened: str
     strategy: str
     open_index: int = 0
+    # Optional snippet-driven partial scale-out: when price first reaches
+    # ``scale_price`` close ``scale_frac`` of the position and (if ``scale_be``)
+    # move the stop to break-even. Defaults leave the trade as a plain SL/TP.
+    scale_price: float | None = None
+    scale_frac: float = 0.0
+    scale_be: bool = False
+    scaled: bool = False
+    realized: float = 0.0          # PnL already banked from partial scale-outs
+    init_stop: float = 0.0         # entry stop (for R accounting after a BE move)
+    init_size: float = 0.0         # entry size (before any scale-out)
+
+    def __post_init__(self) -> None:
+        if not self.init_stop:
+            self.init_stop = self.stop
+        if not self.init_size:
+            self.init_size = self.size
 
     def unrealised(self, price: float) -> float:
         sign = 1.0 if self.direction is Direction.BUY else -1.0
@@ -119,33 +135,59 @@ def run_backtest(
     trades_today = 0
     run_peak = starting_equity
 
+    def _record_partial(ot: _OpenTrade, price: float, closed_iso: str) -> None:
+        """Close ``scale_frac`` of an open trade at ``price`` (bank it into balance),
+        then optionally move the stop to break-even. The remainder rides on. PnL is
+        NOT booked as a separate trade — it is carried on ``ot.realized`` and merged
+        into the trade's single result at final exit, so one entry = one trade."""
+        nonlocal balance
+        closed = ot.size * ot.scale_frac
+        pnl = ot.unrealised(price) * ot.scale_frac - cost_points * closed
+        balance += pnl
+        ot.realized += pnl
+        ot.size -= closed
+        ot.scaled = True
+        if ot.scale_be:
+            ot.stop = ot.entry          # remainder now rides risk-free
+        trade_log.append({
+            "market": market.key, "direction": ot.direction.value,
+            "entry": round(ot.entry, 4), "exit": round(price, 4),
+            "stop": round(ot.stop, 4), "pnl": round(pnl, 2),
+            "ret_pct": round(100.0 * pnl / starting_equity, 3),
+            "opened": ot.opened, "closed": closed_iso,
+            "reason": "SCALE", "strategy": ot.strategy,
+        })
+
     def _record_exit(ot: _OpenTrade, exit_price: float, reason: str, closed_iso: str) -> None:
         """Book a closed trade into all accumulators (shared by every exit path)."""
         nonlocal balance, wins, gross_win, gross_loss, rr_sum, consec_losses, consec_wins
         # Subtract round-trip transaction cost (spread + commission), in price
-        # units × size — the realism that kills naive high-frequency scalps.
+        # units × size — the realism that kills naive high-frequency scalps. Any PnL
+        # already banked from a partial scale-out is merged in so the trade books a
+        # single combined result (win-rate / PF / return stay one-entry-one-trade).
         pnl = ot.unrealised(exit_price) - cost_points * ot.size
+        total = pnl + ot.realized
         balance += pnl
-        ret = 100.0 * pnl / starting_equity
-        trade_pnls.append(pnl)
+        ret = 100.0 * total / starting_equity
+        trade_pnls.append(total)
         trade_rets.append(ret)
-        if pnl >= 0:
+        if total >= 0:
             wins += 1
-            gross_win += pnl
+            gross_win += total
             consec_wins += 1
             consec_losses = 0
         else:
-            gross_loss += -pnl
+            gross_loss += -total
             consec_losses += 1
             consec_wins = 0
-        risk_pts = abs(ot.entry - ot.stop)
+        risk_pts = abs(ot.entry - ot.init_stop)   # R is measured from the ENTRY stop
         if risk_pts > 0:
             rr_sum += abs(exit_price - ot.entry) / risk_pts
         trade_log.append({
             "market": market.key, "direction": ot.direction.value,
             "entry": round(ot.entry, 4), "exit": round(exit_price, 4),
             "stop": round(ot.stop, 4),
-            "pnl": round(pnl, 2), "ret_pct": round(ret, 3),
+            "pnl": round(total, 2), "ret_pct": round(ret, 3),
             "opened": ot.opened, "closed": closed_iso,
             "reason": reason, "strategy": ot.strategy,
         })
@@ -189,12 +231,22 @@ def run_backtest(
             if open_trade.direction is Direction.BUY:
                 if bar.low <= open_trade.stop:
                     exit_price, reason = open_trade.stop, "SL"
-                elif bar.high >= open_trade.target:
-                    exit_price, reason = open_trade.target, "TP"
             else:
                 if bar.high >= open_trade.stop:
                     exit_price, reason = open_trade.stop, "SL"
-                elif bar.low <= open_trade.target:
+            # Partial scale-out (stop has worst-case priority): when price first
+            # reaches the scale level, bank a fraction and move the stop to BE; the
+            # remainder then rides to the final target (checked next).
+            if (exit_price is None and not open_trade.scaled
+                    and open_trade.scale_price is not None and open_trade.scale_frac > 0):
+                hit = (bar.high >= open_trade.scale_price if open_trade.direction is Direction.BUY
+                       else bar.low <= open_trade.scale_price)
+                if hit:
+                    _record_partial(open_trade, open_trade.scale_price, bar.time.isoformat())
+            if exit_price is None:
+                if open_trade.direction is Direction.BUY and bar.high >= open_trade.target:
+                    exit_price, reason = open_trade.target, "TP"
+                elif open_trade.direction is Direction.SELL and bar.low <= open_trade.target:
                     exit_price, reason = open_trade.target, "TP"
             if exit_price is not None:
                 _record_exit(open_trade, exit_price, reason, bar.time.isoformat())
@@ -234,10 +286,22 @@ def run_backtest(
                 entry_risk = chosen_risk if chosen_risk is not None else risk_pct
                 risk_amt = equity * (entry_risk / 100.0)
                 size = max(risk_amt / sig.stop_distance, 0.0)
+                # Optional two-stage exit: scale a fraction out at a level the snippet
+                # chose (e.g. the POC) and ride the rest to target at break-even. Only
+                # honoured when the level sits on the profit side of the entry.
+                s_price = getattr(custom, "last_scale_price", None) if custom else None
+                if s_price is not None:
+                    profit_side = (s_price > sig.entry if sig.direction is Direction.BUY
+                                   else s_price < sig.entry)
+                    if not profit_side:
+                        s_price = None
                 open_trade = _OpenTrade(
                     direction=sig.direction, entry=sig.entry, stop=sig.stop,
                     target=sig.target, size=size, opened=bar.time.isoformat(),
                     strategy=sig.strategy, open_index=i,
+                    scale_price=s_price,
+                    scale_frac=(getattr(custom, "last_scale_frac", 0.0) if custom and s_price else 0.0),
+                    scale_be=(getattr(custom, "last_scale_be", False) if custom and s_price else False),
                 )
                 trades_today += 1
 
