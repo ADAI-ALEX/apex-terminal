@@ -485,6 +485,7 @@ class CompiledStrategy:
         day_pnl_pct: float = 0.0, consec_losses: int = 0,
         consec_wins: int = 0, trades_today: int = 0,
         dd_from_peak_pct: float = 0.0, total_pnl_pct: float = 0.0,
+        bars_since_scale: int = -1,
     ) -> tuple[str | None, float | None]:
         """Return ``(decision, risk)`` for bar ``index``.
 
@@ -557,6 +558,9 @@ class CompiledStrategy:
             "day_pnl_pct": float(day_pnl_pct), "consec_losses": int(consec_losses),
             "consec_wins": int(consec_wins), "trades_today": int(trades_today),
             "dd_from_peak_pct": float(dd_from_peak_pct), "total_pnl_pct": float(total_pnl_pct),
+            # runner state: bars since the partial scale-out (−1 if not scaled yet),
+            # and a convenience flag, for a one-time velocity gate on the runner.
+            "bars_since_scale": int(bars_since_scale), "scaled": bool(bars_since_scale >= 0),
             # outputs (the snippet sets these)
             "signal": None, "risk": None,
             # optional exit geometry overrides (None → engine defaults)
