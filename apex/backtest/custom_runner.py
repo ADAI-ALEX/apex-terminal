@@ -475,6 +475,8 @@ class CompiledStrategy:
         self.last_scale_price: float | None = None
         self.last_scale_frac: float = 0.0
         self.last_scale_be: bool = False
+        # Optional trailing stop (price-distance) on the runner after a scale-out.
+        self.last_trail_dist: float = 0.0
 
     def decide(
         self, index: int, candles: Sequence[Candle], *,
@@ -561,6 +563,8 @@ class CompiledStrategy:
             "stop_mult": None, "target_rr": None,
             # optional two-stage exit (scale a fraction out at a price, BE the rest)
             "scale_at": None, "scale_frac": None, "scale_be": None,
+            # optional trailing stop (price distance) on the runner after the scale
+            "trail_dist": None,
         }
         try:
             exec(self._code, ns)  # noqa: S102 - sandboxed: restricted builtins + source check
@@ -586,4 +590,9 @@ class CompiledStrategy:
             self.last_scale_price = None
         self.last_scale_frac = _clamp(ns.get("scale_frac"), 0.0, 0.95) or 0.0
         self.last_scale_be = bool(ns.get("scale_be"))
+        td = ns.get("trail_dist")
+        try:
+            self.last_trail_dist = max(0.0, float(td)) if td is not None else 0.0  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            self.last_trail_dist = 0.0
         return decision, chosen_risk

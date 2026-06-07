@@ -207,6 +207,63 @@ def test_v2_sizes_above_v1_floor():
     assert max(risks) >= 0.8
 
 
+def test_runner_exposes_trail_dist():
+    """A snippet can request a trailing stop via trail_dist (price distance)."""
+    strat = CompiledStrategy("signal = 'BUY'\nscale_at = 50.0\nscale_frac = 0.25\ntrail_dist = 5.0\n")
+    candles = _make_series(120)
+    strat.decide(100, candles, position=0)
+    assert strat.last_trail_dist == 5.0
+
+
+def test_trailing_stop_locks_profit_on_runner():
+    """After scaling, the trailing stop ratchets up and locks profit when price
+    rises then reverses — booked as one combined, profitable trade."""
+    from apex.backtest.engine import run_backtest
+    from apex.config import MARKETS
+
+    t0 = _base_time()
+    rise = [_bar(t0 + timedelta(hours=i), 100 + i, 101 + i, 99.5 + i, 100.7 + i, 1000.0)
+            for i in range(140)]              # steady climb (scale + trail ratchet up)
+    fall = [_bar(t0 + timedelta(hours=140 + i), 240 - 3 * i, 240.5 - 3 * i,
+                 238 - 3 * i, 239 - 3 * i, 1000.0) for i in range(20)]  # sharp drop -> trail hit
+    code = (
+        "if position == 0 and i == 80:\n"
+        "    signal = 'BUY'\n"
+        "    stop_mult = 2.0\n"
+        "    target_rr = 50.0\n"          # target far away so only the trail can exit
+        "    scale_at = close + 2.0\n"
+        "    scale_frac = 0.25\n"
+        "    scale_be = True\n"
+        "    trail_dist = 4.0\n"
+    )
+    res = run_backtest(rise + fall, MARKETS["US500"], warmup=60,
+                       strategy={"name": "trailtest", "kind": "custom", "code": code},
+                       mc_runs=0, cost_points=0.0).to_dict()
+    reasons = [t["reason"] for t in res["trade_log"]]
+    assert "SCALE" in reasons                       # 25% banked at the scale level
+    assert res["trades"] == 1                        # one combined trade
+    assert res["total_return_pct"] > 0               # trailing stop locked in profit
+
+
+def test_v5_long_only_and_breaker():
+    """V5: long-only, -3.5% daily breaker, sizing in the 1.2–1.9% band. (The
+    asymmetric trailing-exit path itself is covered by the engine/runner tests.)"""
+    meta = store.get("auction_flow_v5")
+    assert meta is not None, "auction_flow_v5 strategy file must exist"
+    strat = CompiledStrategy(meta.code)
+    candles = _make_series(500)
+    risks, decisions = [], set()
+    for i in range(60, len(candles)):
+        d, r = strat.decide(i, candles, position=0)
+        decisions.add(d)
+        if r is not None:
+            risks.append(r)
+    assert "SELL" not in decisions                     # long-only
+    assert risks and 1.2 <= min(risks) and max(risks) <= 1.9   # V4-style tilt band
+    d, _ = strat.decide(300, candles, position=1, day_pnl_pct=-3.6)
+    assert d == "FLAT"                                 # -3.5% hard daily breaker
+
+
 def test_v4_long_only_divergence_tilt_sizing():
     """V4 (Max Risk): long-only, 1.2–2.2% divergence-tilted sizing, -3.2% breaker."""
     meta = store.get("auction_flow_v4")
