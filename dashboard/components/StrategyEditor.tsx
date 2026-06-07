@@ -38,7 +38,7 @@ const API_NAMES = new Set([
   "hour", "minute", "dow",
   "position", "bars_held", "equity", "risk_pct", "leverage",
   "day_pnl_pct", "consec_losses", "consec_wins", "trades_today",
-  "dd_from_peak_pct", "total_pnl_pct",
+  "dd_from_peak_pct", "total_pnl_pct", "scaled", "bars_since_scale",
 ]);
 
 const CHEATSHEET: { group: string; items: [string, string][] }[] = [
@@ -112,6 +112,7 @@ const CHEATSHEET: { group: string; items: [string, string][] }[] = [
       ["total_pnl_pct", "P&L since inception (%)"],
       ["consec_losses / wins", "current closed-trade streak"],
       ["trades_today", "trades opened so far today"],
+      ["scaled / bars_since_scale", "runner state after a partial scale-out"],
     ],
   },
   {

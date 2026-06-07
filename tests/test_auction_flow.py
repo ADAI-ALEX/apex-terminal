@@ -264,6 +264,33 @@ def test_v5_long_only_and_breaker():
     assert d == "FLAT"                                 # -3.5% hard daily breaker
 
 
+def test_runner_bars_since_scale_kwarg():
+    """The engine feeds bars_since_scale to decide() for a one-time runner gate."""
+    strat = CompiledStrategy("signal = 'FLAT' if bars_since_scale == 1 else 'HOLD'\n")
+    candles = _make_series(120)
+    d_gate, _ = strat.decide(100, candles, position=1, bars_since_scale=1)
+    d_none, _ = strat.decide(100, candles, position=1, bars_since_scale=-1)
+    assert d_gate == "FLAT" and d_none is None
+
+
+def test_v5_1_hybrid_long_only_and_breaker():
+    """V5.1-Hybrid: long-only, 1.2–1.9% sizing, -3.2% daily breaker."""
+    meta = store.get("auction_flow_v5_1_hybrid")
+    assert meta is not None, "auction_flow_v5_1_hybrid strategy file must exist"
+    strat = CompiledStrategy(meta.code)
+    candles = _make_series(500)
+    risks, decisions = [], set()
+    for i in range(60, len(candles)):
+        d, r = strat.decide(i, candles, position=0)
+        decisions.add(d)
+        if r is not None:
+            risks.append(r)
+    assert "SELL" not in decisions
+    assert risks and 1.2 <= min(risks) and max(risks) <= 1.9
+    d, _ = strat.decide(300, candles, position=1, day_pnl_pct=-3.3)
+    assert d == "FLAT"                                 # -3.2% hard daily breaker
+
+
 def test_v4_long_only_divergence_tilt_sizing():
     """V4 (Max Risk): long-only, 1.2–2.2% divergence-tilted sizing, -3.2% breaker."""
     meta = store.get("auction_flow_v4")

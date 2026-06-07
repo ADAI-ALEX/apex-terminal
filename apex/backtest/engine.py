@@ -48,6 +48,7 @@ class _OpenTrade:
     trail_dist: float = 0.0
     run_high: float = 0.0
     run_low: float = 0.0
+    scale_index: int = -1          # bar index the scale-out fired (for a velocity gate)
 
     def __post_init__(self) -> None:
         if not self.init_stop:
@@ -222,12 +223,18 @@ def run_backtest(
             run_peak = max(run_peak, eq_now)
             dd_from_peak_pct = 100.0 * (run_peak - eq_now) / run_peak if run_peak else 0.0
             total_pnl_pct = 100.0 * (eq_now - starting_equity) / starting_equity if starting_equity else 0.0
+            # Bars since the partial scale-out fired (−1 if not scaled) — lets a snippet
+            # run a one-time "velocity gate" on the runner the moment it banks at the POC.
+            bars_since_scale = (i - open_trade.scale_index
+                                if open_trade and open_trade.scaled and open_trade.scale_index >= 0
+                                else -1)
             decision, chosen_risk = custom.decide(
                 i, candles, position=pos, bars_held=held, equity=eq_now,
                 risk_pct=risk_pct, leverage=float(getattr(market, "fca_leverage", 0)),
                 day_pnl_pct=day_pnl_pct, consec_losses=consec_losses,
                 consec_wins=consec_wins, trades_today=trades_today,
                 dd_from_peak_pct=dd_from_peak_pct, total_pnl_pct=total_pnl_pct,
+                bars_since_scale=bars_since_scale,
             )
         else:
             decision = None
@@ -250,6 +257,7 @@ def run_backtest(
                        else bar.low <= open_trade.scale_price)
                 if hit:
                     _record_partial(open_trade, open_trade.scale_price, bar.time.isoformat())
+                    open_trade.scale_index = i      # mark the POC-touch bar for the gate
             if exit_price is None:
                 if open_trade.direction is Direction.BUY and bar.high >= open_trade.target:
                     exit_price, reason = open_trade.target, "TP"
