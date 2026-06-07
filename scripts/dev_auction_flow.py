@@ -172,22 +172,24 @@ V1_FILE = STRATEGY_FILE
 V2_FILE = STRATEGY_FILE.parent / "auction_flow_v2.py"
 V3_FILE = STRATEGY_FILE.parent / "auction_flow_v3.py"
 V4_FILE = STRATEGY_FILE.parent / "auction_flow_v4.py"
+V5_FILE = STRATEGY_FILE.parent / "auction_flow_v5.py"
 
 
 def compare(key: str = "US500", bars: int = 10000) -> None:
-    """Side-by-side V1..V4 over the most recent ``bars`` candles (costs ON)."""
+    """Side-by-side V1..V5 over the most recent ``bars`` candles (costs ON)."""
     s = full(key, "60m")
     cs = s.candles[-bars:]
     exo = {n: v[-bars:] for n, v in s.exo.items()}
     span = f"{cs[0].time.isoformat()[:10]} -> {cs[-1].time.isoformat()[:10]}"
-    print(f"\n=== V1..V4 — {key} 60m, last {len(cs)} bars ({span}), costs ON ===")
-    print("%-28s %8s %7s %6s %6s %8s %8s" % (
-        "strategy", "return%", "trades", "win%", "PF", "maxDayDD", "maxTotDD"))
+    print(f"\n=== V1..V5 — {key} 60m, last {len(cs)} bars ({span}), costs ON ===")
+    print("%-28s %8s %7s %6s %6s %6s %8s %8s" % (
+        "strategy", "return%", "trades", "win%", "avgRR", "PF", "maxDayDD", "maxTotDD"))
     st = get_settings()
     variants = (("Auction Flow V1", V1_FILE),
                 ("Auction Flow V2 (Challenge)", V2_FILE),
                 ("Auction Flow V3 (Max Util)", V3_FILE),
-                ("Auction Flow V4 (Max Risk)", V4_FILE))
+                ("Auction Flow V4 (Max Risk)", V4_FILE),
+                ("Auction Flow V5 (Asymmetric)", V5_FILE))
     for label, path in variants:
         code = path.read_text(encoding="utf-8")
         r = run_backtest(
@@ -197,8 +199,12 @@ def compare(key: str = "US500", bars: int = 10000) -> None:
             rr=st.risk.default_rr, strategy={"name": label, "kind": "custom", "code": code},
             exo=exo, cost_points=_COST.get(key, 0.5),
         ).to_dict()
-        print("%-28s %8.2f %7d %6.1f %6.2f %8.2f %8.2f" % (
-            label, r["total_return_pct"], r["trades"], r["win_rate"], r["profit_factor"],
+        # Realised R:R = avg win / avg loss (payoff ratio) = PF * (losses/wins).
+        wr = r["win_rate"] / 100.0
+        pf = r["profit_factor"]
+        avg_rr = round(pf * (1.0 - wr) / wr, 2) if 0.0 < wr < 1.0 else 0.0
+        print("%-28s %8.2f %7d %6.1f %6.2f %6.2f %8.2f %8.2f" % (
+            label, r["total_return_pct"], r["trades"], r["win_rate"], avg_rr, pf,
             r["max_daily_dd_pct"], r["max_total_dd_pct"]))
         mc = r.get("monte_carlo", {})
         print("    MC P(+10%% before -10%%): %s%%   breach: %s%%   expectancy/trade: %s%%" % (

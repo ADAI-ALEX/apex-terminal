@@ -43,6 +43,11 @@ class _OpenTrade:
     realized: float = 0.0          # PnL already banked from partial scale-outs
     init_stop: float = 0.0         # entry stop (for R accounting after a BE move)
     init_size: float = 0.0         # entry size (before any scale-out)
+    # Optional trailing stop on the runner: once the trade has scaled out, ratchet
+    # the stop to (run-extreme ∓ trail_dist) each bar so a winner can trend-extend.
+    trail_dist: float = 0.0
+    run_high: float = 0.0
+    run_low: float = 0.0
 
     def __post_init__(self) -> None:
         if not self.init_stop:
@@ -147,6 +152,8 @@ def run_backtest(
         ot.realized += pnl
         ot.size -= closed
         ot.scaled = True
+        ot.run_high = price             # seed the trailing-stop high/low watermark
+        ot.run_low = price
         if ot.scale_be:
             ot.stop = ot.entry          # remainder now rides risk-free
         trade_log.append({
@@ -252,6 +259,21 @@ def run_backtest(
                 _record_exit(open_trade, exit_price, reason, bar.time.isoformat())
                 open_trade = None
 
+        # ── ratchet the trailing stop on a surviving (scaled) runner ──────
+        # Updates the watermark with THIS bar then raises the stop, but the new
+        # stop is only tested from the NEXT bar (no intrabar look-ahead).
+        if open_trade is not None and open_trade.scaled and open_trade.trail_dist > 0:
+            if open_trade.direction is Direction.BUY:
+                open_trade.run_high = max(open_trade.run_high, bar.high)
+                cand = open_trade.run_high - open_trade.trail_dist
+                if cand > open_trade.stop:
+                    open_trade.stop = cand
+            else:
+                open_trade.run_low = min(open_trade.run_low, bar.low)
+                cand = open_trade.run_low + open_trade.trail_dist
+                if cand < open_trade.stop:
+                    open_trade.stop = cand
+
         # ── custom signal exits: FLAT closes, an opposite signal flips ────
         if open_trade is not None and decision is not None:
             flip = ((decision == "BUY" and open_trade.direction is Direction.SELL)
@@ -302,6 +324,7 @@ def run_backtest(
                     scale_price=s_price,
                     scale_frac=(getattr(custom, "last_scale_frac", 0.0) if custom and s_price else 0.0),
                     scale_be=(getattr(custom, "last_scale_be", False) if custom and s_price else False),
+                    trail_dist=(getattr(custom, "last_trail_dist", 0.0) if custom else 0.0),
                 )
                 trades_today += 1
 
