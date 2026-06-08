@@ -78,7 +78,8 @@ def linearity(eq: list[dict]) -> float:
 _COST = {"US500": 0.5, "NAS100": 2.0, "EURUSD": 0.00008}
 
 
-def run(code: str, key: str, tf_min: int, start=None, end=None, mc_runs: int = 400) -> dict:
+def run(code: str, key: str, tf_min: int, start=None, end=None, mc_runs: int = 400,
+        total_limit_pct: float = 9.0) -> dict:
     tf = dataset.suffix_for(tf_min)
     s = full(key, tf)
     cs, exo = _slice(s, start, end)
@@ -88,13 +89,15 @@ def run(code: str, key: str, tf_min: int, start=None, end=None, mc_runs: int = 4
     r = run_backtest(
         cs, market_for(key), starting_equity=100_000.0,
         risk_pct=st.risk.max_risk_per_trade_pct, atr_stop_mult=st.risk.atr_stop_multiplier,
-        params=st.strategy, mc_runs=mc_runs, target_pct=10.0, total_limit_pct=10.0,
+        params=st.strategy, mc_runs=mc_runs, target_pct=10.0, total_limit_pct=total_limit_pct,
         rr=st.risk.default_rr, strategy={"name": "af", "kind": "custom", "code": code},
         exo=exo, cost_points=_COST.get(key, 0.5),
     )
     d = r.to_dict()
     d["lin"] = linearity(d["equity_curve"])
     d["bars"] = len(cs)
+    # Window length in months (for Return/Month normalisation across timeframes).
+    d["months"] = max(0.5, (cs[-1].time - cs[0].time).days / 30.44)
     return d
 
 
@@ -181,27 +184,82 @@ V6_1_FILE = STRATEGY_FILE.parent / "auction_flow_v6_1_mtf.py"
 V6_2_FILE = STRATEGY_FILE.parent / "auction_flow_v6_2_optimized.py"
 
 
-def compare15(key: str = "US500") -> None:
-    """Phase-2: V6.a vs V6.b vs V6.1-Master on the full 15M dataset (costs ON)."""
+def _row15(label: str, path, key: str, mc: int) -> dict | None:
+    r = run(path.read_text(encoding="utf-8"), key, 15, mc_runs=mc, total_limit_pct=9.0)
+    if r.get("error"):
+        print("%-30s  %s" % (label, r["error"]))
+        return None
+    rpm = r["total_return_pct"] / r["months"]
+    mcp = r.get("monte_carlo", {}).get("pass_prob_pct", "-")
+    print("%-30s %8.2f %8.3f %7d %6.1f %6.2f %8.2f %8.2f %8.3f %7s" % (
+        label, r["total_return_pct"], rpm, r["trades"], r["win_rate"], r["profit_factor"],
+        r["max_daily_dd_pct"], r["max_total_dd_pct"], r["expectancy_pct"], mcp), flush=True)
+    return r
+
+
+def compare15(key: str = "US500", mc: int = 200) -> None:
+    """Phase-3: V6.0.a / V6.0.b / V6.1 / V6.2 on the full (deep) 15M set (costs ON).
+
+    MC pass is measured against the 9.0% internal total-DD stop; Return/Month
+    normalises across the different history lengths."""
     s = full(key, "15m")
     cs = s.candles
     span = f"{cs[0].time.isoformat()[:10]} -> {cs[-1].time.isoformat()[:10]}"
-    print(f"\n=== V6.a / V6.b / V6.1 — {key} 15M, {len(cs)} bars ({span}), costs ON ===")
-    print("%-30s %8s %7s %6s %6s %8s %8s %8s" % (
-        "strategy", "return%", "trades", "win%", "PF", "maxDayDD", "maxTotDD", "exp/trd"))
-    for label, path in (("V6.a-Base (100% at POC)", V6_A_FILE),
-                        ("V6.b-Hybrid (gated runner)", V6_B_FILE),
-                        ("V6.1-Master (MTF anchored)", V6_1_FILE)):
-        r = run(path.read_text(encoding="utf-8"), key, 15, mc_runs=200)
+    months = (cs[-1].time - cs[0].time).days / 30.44
+    print(f"\n=== V6 family — {key} 15M, {len(cs)} bars ({span}, {months:.0f}mo), costs ON ===")
+    print("%-30s %8s %8s %7s %6s %6s %8s %8s %8s %7s" % (
+        "strategy", "return%", "ret/mo", "trades", "win%", "PF", "maxDayDD",
+        "maxTotDD", "exp/trd", "MC9%"))
+    for label, path in (("V6.0.a-Base (100% at POC)", V6_A_FILE),
+                        ("V6.0.b-Hybrid (gated runner)", V6_B_FILE),
+                        ("V6.1-MTF (anchored)", V6_1_FILE),
+                        ("V6.2-Optimized (deep scale)", V6_2_FILE)):
+        if path.exists():
+            _row15(label, path, key, mc)
+
+
+def matrix(key: str = "US500") -> None:
+    """Phase-3 grand matrix: V4 & V5.2 (1H, last 10k bars) vs the V6 family (deep
+    15M), MC pass measured against the 9.0% internal total-DD stop, plus a
+    Return/Month normaliser across the different history lengths. Costs ON."""
+    st = get_settings()
+
+    def _run_1h(code: str) -> dict:
+        s = full(key, "60m")
+        cs = s.candles[-10000:]
+        exo = {n: v[-10000:] for n, v in s.exo.items()}
+        r = run_backtest(
+            cs, market_for(key), starting_equity=100_000.0,
+            risk_pct=st.risk.max_risk_per_trade_pct, atr_stop_mult=st.risk.atr_stop_multiplier,
+            params=st.strategy, mc_runs=300, target_pct=10.0, total_limit_pct=9.0,
+            rr=st.risk.default_rr, strategy={"name": "m", "kind": "custom", "code": code},
+            exo=exo, cost_points=_COST.get(key, 0.5),
+        ).to_dict()
+        r["months"] = (cs[-1].time - cs[0].time).days / 30.44
+        return r
+
+    rows = [
+        ("V4 (1H Base)", _run_1h(V4_FILE.read_text(encoding="utf-8"))),
+        ("V5.2 (1H Scaled Peak)", _run_1h(V5_2_FILE.read_text(encoding="utf-8"))),
+        ("V6.0.a (15M Base)", run(V6_A_FILE.read_text(encoding="utf-8"), key, 15, mc_runs=150, total_limit_pct=9.0)),
+        ("V6.0.b (15M Hybrid)", run(V6_B_FILE.read_text(encoding="utf-8"), key, 15, mc_runs=150, total_limit_pct=9.0)),
+        ("V6.1 (15M MTF)", run(V6_1_FILE.read_text(encoding="utf-8"), key, 15, mc_runs=150, total_limit_pct=9.0)),
+        ("V6.2 (15M Deep)", run(V6_2_FILE.read_text(encoding="utf-8"), key, 15, mc_runs=150, total_limit_pct=9.0)),
+    ]
+    print("\n=== GRAND MATRIX (%s, costs ON, MC vs 9%% total-DD stop) ===" % key)
+    print("%-22s %8s %7s %7s %6s %6s %8s %8s %8s %6s" % (
+        "strategy", "return%", "ret/mo", "trades", "win%", "PF", "maxDayDD",
+        "maxTotDD", "exp/trd", "MC9%"))
+    for label, r in rows:
         if r.get("error"):
-            print("%-28s  %s" % (label, r["error"]))
+            print("%-22s  %s" % (label, r["error"]))
             continue
-        print("%-30s %8.2f %7d %6.1f %6.2f %8.2f %8.2f %8.3f" % (
-            label, r["total_return_pct"], r["trades"], r["win_rate"], r["profit_factor"],
-            r["max_daily_dd_pct"], r["max_total_dd_pct"], r["expectancy_pct"]))
-        mc = r.get("monte_carlo", {})
-        print("    MC P(+10%% before -10%%): %s%%   breach: %s%%" % (
-            mc.get("pass_prob_pct", "-"), mc.get("breach_prob_pct", "-")))
+        rpm = r["total_return_pct"] / r["months"]
+        mcp = r.get("monte_carlo", {}).get("pass_prob_pct", "-")
+        print("%-22s %8.2f %7.3f %7d %6.1f %6.2f %8.2f %8.2f %8.3f %6s" % (
+            label, r["total_return_pct"], rpm, r["trades"], r["win_rate"],
+            r["profit_factor"], r["max_daily_dd_pct"], r["max_total_dd_pct"],
+            r["expectancy_pct"], mcp), flush=True)
 
 
 def compare(key: str = "US500", bars: int = 10000) -> None:
@@ -252,6 +310,9 @@ def main() -> None:
         return
     if which == "compare15":
         compare15()
+        return
+    if which == "matrix":
+        matrix()
         return
     code = STRATEGY_FILE.read_text(encoding="utf-8")
     keys = {"nas100": ["NAS100"], "us500": ["US500"], "both": ["NAS100", "US500"]}.get(which, ["NAS100", "US500"])
