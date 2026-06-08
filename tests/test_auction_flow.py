@@ -327,6 +327,24 @@ def test_v6_1_master_long_only_band_and_breaker():
     assert d == "FLAT"
 
 
+def test_v6_2_long_only_and_breaker():
+    """V6.2 (deep-validated): long-only, 0.8–1.6% band, -4.0% daily breaker."""
+    meta = store.get("auction_flow_v6_2_optimized")
+    assert meta is not None, "auction_flow_v6_2_optimized strategy file must exist"
+    strat = CompiledStrategy(meta.code)
+    candles = _make_series(500)
+    risks, decisions = [], set()
+    for i in range(60, len(candles)):
+        d, r = strat.decide(i, candles, position=0)
+        decisions.add(d)
+        if r is not None:
+            risks.append(r)
+    assert "SELL" not in decisions
+    assert risks and 0.8 <= min(risks) and max(risks) <= 1.6
+    d, _ = strat.decide(300, candles, position=1, day_pnl_pct=-4.1)
+    assert d == "FLAT"
+
+
 def test_v6_15m_pair_long_only_and_band():
     """V6.a/V6.b (15M): long-only, 0.8–1.4% sizing band, -4.0% daily breaker."""
     for name in ("auction_flow_v6_0_a_base", "auction_flow_v6_0_b_hybrid"):
