@@ -175,30 +175,33 @@ V4_FILE = STRATEGY_FILE.parent / "auction_flow_v4.py"
 V5_FILE = STRATEGY_FILE.parent / "auction_flow_v5.py"
 V5_1_FILE = STRATEGY_FILE.parent / "auction_flow_v5_1_hybrid.py"
 V5_2_FILE = STRATEGY_FILE.parent / "auction_flow_v5_2_scaled.py"
-V6_A_FILE = STRATEGY_FILE.parent / "auction_flow_v6_a_base.py"
-V6_B_FILE = STRATEGY_FILE.parent / "auction_flow_v6_b_hybrid.py"
+V6_A_FILE = STRATEGY_FILE.parent / "auction_flow_v6_0_a_base.py"
+V6_B_FILE = STRATEGY_FILE.parent / "auction_flow_v6_0_b_hybrid.py"
+V6_1_FILE = STRATEGY_FILE.parent / "auction_flow_v6_1_mtf.py"
+V6_2_FILE = STRATEGY_FILE.parent / "auction_flow_v6_2_optimized.py"
 
 
 def compare15(key: str = "US500") -> None:
-    """Phase-2 A/B: V6.a-Base vs V6.b-Hybrid on the full 15M dataset (costs ON)."""
+    """Phase-2: V6.a vs V6.b vs V6.1-Master on the full 15M dataset (costs ON)."""
     s = full(key, "15m")
     cs = s.candles
     span = f"{cs[0].time.isoformat()[:10]} -> {cs[-1].time.isoformat()[:10]}"
-    print(f"\n=== V6.a vs V6.b — {key} 15M, {len(cs)} bars ({span}), costs ON ===")
-    print("%-28s %8s %7s %6s %6s %8s %8s" % (
-        "strategy", "return%", "trades", "win%", "PF", "maxDayDD", "maxTotDD"))
+    print(f"\n=== V6.a / V6.b / V6.1 — {key} 15M, {len(cs)} bars ({span}), costs ON ===")
+    print("%-30s %8s %7s %6s %6s %8s %8s %8s" % (
+        "strategy", "return%", "trades", "win%", "PF", "maxDayDD", "maxTotDD", "exp/trd"))
     for label, path in (("V6.a-Base (100% at POC)", V6_A_FILE),
-                        ("V6.b-Hybrid (gated runner)", V6_B_FILE)):
+                        ("V6.b-Hybrid (gated runner)", V6_B_FILE),
+                        ("V6.1-Master (MTF anchored)", V6_1_FILE)):
         r = run(path.read_text(encoding="utf-8"), key, 15, mc_runs=200)
         if r.get("error"):
             print("%-28s  %s" % (label, r["error"]))
             continue
-        print("%-28s %8.2f %7d %6.1f %6.2f %8.2f %8.2f" % (
+        print("%-30s %8.2f %7d %6.1f %6.2f %8.2f %8.2f %8.3f" % (
             label, r["total_return_pct"], r["trades"], r["win_rate"], r["profit_factor"],
-            r["max_daily_dd_pct"], r["max_total_dd_pct"]))
+            r["max_daily_dd_pct"], r["max_total_dd_pct"], r["expectancy_pct"]))
         mc = r.get("monte_carlo", {})
-        print("    MC P(+10%% before -10%%): %s%%   breach: %s%%   expectancy/trade: %s%%" % (
-            mc.get("pass_prob_pct", "-"), mc.get("breach_prob_pct", "-"), r["expectancy_pct"]))
+        print("    MC P(+10%% before -10%%): %s%%   breach: %s%%" % (
+            mc.get("pass_prob_pct", "-"), mc.get("breach_prob_pct", "-")))
 
 
 def compare(key: str = "US500", bars: int = 10000) -> None:
