@@ -26,11 +26,13 @@ from apex.models import Candle
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
 #: Exogenous (non-price) columns the dataset carries, exposed to custom strategies.
-EXO_FIELDS: tuple[str, ...] = ("fear_greed", "vix", "sentiment")
+#: ``delta`` is the per-bar taker-flow volume delta (aggressive buys − sells, base
+#: units) carried by the Binance perp seeds — REAL order flow, not a proxy.
+EXO_FIELDS: tuple[str, ...] = ("fear_greed", "vix", "sentiment", "delta", "macro", "macro_slow")
 
 #: Candle-minutes → on-disk file suffix. Daily is the deep (20y) series; intraday
-#: timeframes are shallower (1h ~2y, 15m/5m ~60d).
-TF_SUFFIX: dict[int, str] = {1440: "D1", 60: "60m", 15: "15m", 5: "5m"}
+#: depth varies per instrument (crypto perp seeds reach 2020 on 1h/15m).
+TF_SUFFIX: dict[int, str] = {1440: "D1", 60: "60m", 15: "15m", 5: "5m", 1: "1m"}
 
 
 def suffix_for(minutes: int) -> str:
