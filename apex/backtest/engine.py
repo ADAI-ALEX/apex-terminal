@@ -55,6 +55,10 @@ class _OpenTrade:
             self.init_stop = self.stop
         if not self.init_size:
             self.init_size = self.size
+        if not self.run_high:
+            self.run_high = self.entry      # seed the trail watermark at entry
+        if not self.run_low:
+            self.run_low = self.entry
 
     def unrealised(self, price: float) -> float:
         sign = 1.0 if self.direction is Direction.BUY else -1.0
@@ -102,6 +106,7 @@ def run_backtest(
     exo: dict[str, list[float]] | None = None,
     rr: float = 1.8,
     cost_points: float = 0.0,
+    cost_pct: float = 0.0,
 ) -> BacktestResult:
     """Replay ``candles`` through either the live strategy book (default) or a
     user-authored custom strategy.
@@ -141,6 +146,16 @@ def run_backtest(
     trades_today = 0
     run_peak = starting_equity
 
+    def _cost(price: float, size: float) -> float:
+        """Round-trip transaction cost for ``size`` units exited at ``price``.
+
+        ``cost_points`` is a fixed price-unit charge; ``cost_pct`` charges a
+        percentage of notional — the right model for crypto perps, where price
+        spans an order of magnitude across the dataset and fees+slippage scale
+        with notional (e.g. 0.12 ≈ taker fee + slippage round trip on Binance).
+        """
+        return (cost_points + price * cost_pct / 100.0) * size
+
     def _record_partial(ot: _OpenTrade, price: float, closed_iso: str) -> None:
         """Close ``scale_frac`` of an open trade at ``price`` (bank it into balance),
         then optionally move the stop to break-even. The remainder rides on. PnL is
@@ -148,7 +163,7 @@ def run_backtest(
         into the trade's single result at final exit, so one entry = one trade."""
         nonlocal balance
         closed = ot.size * ot.scale_frac
-        pnl = ot.unrealised(price) * ot.scale_frac - cost_points * closed
+        pnl = ot.unrealised(price) * ot.scale_frac - _cost(price, closed)
         balance += pnl
         ot.realized += pnl
         ot.size -= closed
@@ -173,7 +188,7 @@ def run_backtest(
         # units × size — the realism that kills naive high-frequency scalps. Any PnL
         # already banked from a partial scale-out is merged in so the trade books a
         # single combined result (win-rate / PF / return stay one-entry-one-trade).
-        pnl = ot.unrealised(exit_price) - cost_points * ot.size
+        pnl = ot.unrealised(exit_price) - _cost(exit_price, ot.size)
         total = pnl + ot.realized
         balance += pnl
         ret = 100.0 * total / starting_equity
@@ -267,10 +282,12 @@ def run_backtest(
                 _record_exit(open_trade, exit_price, reason, bar.time.isoformat())
                 open_trade = None
 
-        # ── ratchet the trailing stop on a surviving (scaled) runner ──────
+        # ── ratchet the trailing stop on a surviving runner ───────────────
         # Updates the watermark with THIS bar then raises the stop, but the new
-        # stop is only tested from the NEXT bar (no intrabar look-ahead).
-        if open_trade is not None and open_trade.scaled and open_trade.trail_dist > 0:
+        # stop is only tested from the NEXT bar (no intrabar look-ahead). Trails
+        # after a scale-out, OR from entry for a pure-trail strategy (no scale_price).
+        if (open_trade is not None and open_trade.trail_dist > 0
+                and (open_trade.scaled or open_trade.scale_price is None)):
             if open_trade.direction is Direction.BUY:
                 open_trade.run_high = max(open_trade.run_high, bar.high)
                 cand = open_trade.run_high - open_trade.trail_dist
@@ -461,6 +478,8 @@ def _monte_carlo(
     target_pct: float, total_limit_pct: float, seed: int,
 ) -> dict:
     """Bootstrap-resample the trade returns to estimate pass / breach probabilities."""
+    if runs <= 0:
+        return {"runs": 0, "note": "Monte Carlo disabled (runs=0)."}
     if len(trade_rets) < 5:
         return {"runs": 0, "note": "Not enough trades for a meaningful Monte Carlo."}
     rng = random.Random(seed)

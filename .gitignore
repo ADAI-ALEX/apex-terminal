@@ -50,3 +50,9 @@ Thumbs.db
 !.vscode/extensions.json
 
 .vercel
+
+# Binance perp seed artifacts: download cache, backups, and the 1m series
+# (re-creatable via scripts/seed_binance_perp.py; 1m is too large for git)
+apex/backtest/data/.binance_cache/
+apex/backtest/data/*.bak
+apex/backtest/data/*_1m.csv

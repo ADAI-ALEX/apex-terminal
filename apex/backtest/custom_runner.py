@@ -38,6 +38,19 @@ Boll = namedtuple("Boll", ["upper", "mid", "lower"])
 Donchian = namedtuple("Donchian", ["upper", "lower"])
 #: Auction map from a rolling volume-by-price profile (see ``_Indicators.volume_profile``).
 VProfile = namedtuple("VProfile", ["poc", "vah", "val", "lvn", "width"])
+#: Hidden-Markov regime read (see the ``hmm`` snippet function): filtered +
+#: one-step-ahead state probabilities from a Gaussian HMM fit walk-forward.
+HMMState = namedtuple("HMMState", [
+    "state",                        # most-likely filtered state name
+    "p_bull", "p_bear", "p_side",   # one-step-ahead probs (mean-sorted states)
+    "edge",                         # p_bull - p_bear (absret mode: p_wild - p_calm)
+    "stick",                        # P(stay) of the current most-likely state
+    "sigma",                        # current state's emission sigma (% per bar)
+    "vol_ratio",                    # sigma(hottest state) / sigma(calmest state)
+])
+#: Today's opening range and the prior session's range (intraday microstructure levels).
+ORange = namedtuple("ORange", ["high", "low", "mid", "width"])
+DayRange = namedtuple("DayRange", ["high", "low", "close"])
 
 # Tokens that must never appear in a user snippet (basic sandbox guard).
 _FORBIDDEN = (
@@ -106,11 +119,16 @@ class _Indicators:
     """Per-bar indicator context over a bounded candle window."""
 
     candles: list[Candle]
+    #: Per-bar REAL taker-flow deltas aligned with ``candles`` (Binance perp
+    #: seeds; empty for instruments without an order-flow column).
+    deltas: list[float] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         self._closes = [c.close for c in self.candles]
         self._prev_closes = self._closes[:-1]
         self._prev_candles = self.candles[:-1]
+        if self.deltas is None:
+            self.deltas = []
 
     def _v(self, cur: float | None, prev: float | None) -> Val:
         if cur is None:
@@ -289,6 +307,73 @@ class _Indicators:
         return self._v(self._cvd_sum(self.candles[-period:]),
                         self._cvd_sum(self._prev_candles[-period:]))
 
+    def flow(self, period: int = 20) -> Val:
+        """Rolling sum of the REAL taker-flow deltas over ``period`` bars.
+
+        Unlike :meth:`cvd` (a close-location proxy), this reads the actual
+        aggressor-side imbalance the exchange reported (taker buys − taker
+        sells, base units) — available on the Binance perp seeds via the
+        ``delta`` data column. NaN when the instrument has no flow column.
+        """
+        d = self.deltas
+        if not d:
+            return _nan_val()
+        cur = sum(d[-period:])
+        prev = sum(d[:-1][-period:]) if len(d) > 1 else None
+        return self._v(cur, prev)
+
+    def flow_norm(self, period: int = 20) -> Val:
+        """Net taker flow / total volume over ``period`` bars, in [−1, +1].
+
+        A bounded, era-stationary pressure read: +0.2 means 60/40 buyer
+        dominance of all volume traded in the window. NaN without flow data.
+        """
+        d = self.deltas
+        if not d:
+            return _nan_val()
+
+        def _calc(dd: list[float], bars: list[Candle]) -> float | None:
+            vol = sum((b.volume or 0.0) for b in bars[-period:])
+            if vol <= 0:
+                return None
+            return sum(dd[-period:]) / vol
+
+        return self._v(_calc(d, self.candles),
+                       _calc(d[:-1], self._prev_candles) if len(d) > 1 else None)
+
+    def opening_range(self, start_h: int = 13, start_m: int = 30, dur_min: int = 60) -> ORange:
+        """Today's **opening range** — the high/low of the bars in the
+        ``[start, start+dur_min)`` UTC window on the current bar's date. The
+        foundation of an Opening-Range Breakout: a coiled session-open range that
+        price then breaks out of. Returns NaN until at least one OR bar exists.
+        """
+        cur = self.candles[-1]
+        d = cur.time.date()
+        lo_m = start_h * 60 + start_m
+        hi_m = lo_m + max(1, int(dur_min))
+        bars = [b for b in self.candles
+                if b.time.date() == d and lo_m <= (b.time.hour * 60 + b.time.minute) < hi_m]
+        if not bars:
+            return ORange(_nan_val(), _nan_val(), _nan_val(), _nan_val())
+        hi = max(b.high for b in bars)
+        lo = min(b.low for b in bars)
+        return ORange(Val(hi), Val(lo), Val((hi + lo) / 2.0), Val(hi - lo))
+
+    def prev_day_range(self) -> DayRange:
+        """The **prior session's** high / low / close — the liquidity-sweep levels
+        intraday algos hunt. Uses the most recent calendar date before the current
+        bar's date that exists in the window. NaN if no prior day is in view."""
+        cur = self.candles[-1]
+        d = cur.time.date()
+        prior = sorted({b.time.date() for b in self.candles if b.time.date() < d})
+        if not prior:
+            return DayRange(_nan_val(), _nan_val(), _nan_val())
+        pd = prior[-1]
+        bars = [b for b in self.candles if b.time.date() == pd]
+        hi = max(b.high for b in bars)
+        lo = min(b.low for b in bars)
+        return DayRange(Val(hi), Val(lo), Val(bars[-1].close))
+
     def cvd_divergence(self, lookback: int = 12) -> int:
         """Regular **CVD divergence** over the last ``lookback`` bars — the order-flow
         "exhaustion" read. Builds the cumulative-volume-delta line across the window
@@ -448,6 +533,140 @@ def compute_markov(
                   m[cur][cur], sd[_BULL], sd[_BEAR], sd[_SIDE])
 
 
+# ── Gaussian Hidden-Markov regime engine ─────────────────────────────────────
+# A step up from the observable ``markov`` chain: states are LATENT and inferred
+# from the return distribution itself (Baum-Welch maximum-likelihood fit), so the
+# model discovers the market's own regime structure — e.g. a fat-tailed
+# liquidation-cascade state vs a tight consolidation state on crypto perps —
+# instead of imposing fixed return-threshold labels. Exposed to snippets as
+# ``hmm(...)``. Walk-forward by construction: the fit at bar *t* sees only
+# closes ≤ *t*, is re-estimated every ``refit`` bars, and the filtered state
+# distribution is advanced bar-by-bar with the forward recursion in between.
+
+#: Trailing observations used to fit the HMM (bounded for per-bar cost).
+HMM_WINDOW = 1000
+#: Bars between Baum-Welch re-fits (the filter still updates EVERY bar).
+HMM_REFIT = 96
+
+_HMM_NEUTRAL = HMMState("SIDE", 1 / 3, 1 / 3, 1 / 3, 0.0, 1 / 3, 0.0, 1.0)
+
+
+def _gauss(x: float, mu: float, var: float) -> float:
+    """Gaussian pdf, floored so a fat-tail outlier can never zero the filter."""
+    z = (x - mu) ** 2 / (2.0 * var)
+    if z > 200.0:
+        return 1e-87
+    return max(math.exp(-z) / math.sqrt(2.0 * math.pi * var), 1e-87)
+
+
+def _hmm_obs(closes: Sequence[float], on: str) -> list[float]:
+    """Per-bar % returns from ``closes`` (``on='absret'`` → magnitudes only)."""
+    obs = [100.0 * (closes[j] / closes[j - 1] - 1.0)
+           for j in range(1, len(closes)) if closes[j - 1]]
+    return [abs(x) for x in obs] if on == "absret" else obs
+
+
+def fit_hmm(
+    obs: Sequence[float], n_states: int = 3, iters: int = 8,
+) -> tuple[list[float], list[list[float]], list[float], list[float]] | None:
+    """Baum-Welch ML fit of a Gaussian HMM over ``obs``. Pure Python, scaled
+    forward-backward, variance-floored. Returns ``(pi, A, means, vars)`` or
+    ``None`` when there is too little data to fit."""
+    T = len(obs)
+    n = n_states
+    if T < 30 * n:
+        return None
+    # Init: means at spread quantiles, shared global variance, sticky transitions.
+    srt = sorted(obs)
+    mus = [srt[int((k + 0.5) * (T - 1) / n)] for k in range(n)]
+    mean = sum(obs) / T
+    gvar = max(sum((x - mean) ** 2 for x in obs) / T, 1e-6)
+    vars_ = [gvar] * n
+    a_off = 0.10 / (n - 1)
+    A = [[0.90 if r == c else a_off for c in range(n)] for r in range(n)]
+    pi = [1.0 / n] * n
+
+    for _ in range(iters):
+        B = [[_gauss(x, mus[k], vars_[k]) for k in range(n)] for x in obs]
+        # forward (scaled)
+        alpha = [[0.0] * n for _ in range(T)]
+        scale = [0.0] * T
+        for k in range(n):
+            alpha[0][k] = pi[k] * B[0][k]
+        s = sum(alpha[0]) or 1e-300
+        scale[0] = s
+        alpha[0] = [a / s for a in alpha[0]]
+        for t in range(1, T):
+            at = alpha[t - 1]
+            row = [sum(at[r] * A[r][c] for r in range(n)) * B[t][c] for c in range(n)]
+            s = sum(row) or 1e-300
+            scale[t] = s
+            alpha[t] = [x / s for x in row]
+        # backward (same scaling)
+        beta = [[1.0] * n for _ in range(T)]
+        for t in range(T - 2, -1, -1):
+            bt1, Bt1 = beta[t + 1], B[t + 1]
+            beta[t] = [sum(A[r][c] * Bt1[c] * bt1[c] for c in range(n)) / (scale[t + 1] or 1e-300)
+                       for r in range(n)]
+        # E-step accumulators
+        gamma = [[alpha[t][k] * beta[t][k] for k in range(n)] for t in range(T)]
+        for t in range(T):
+            s = sum(gamma[t]) or 1e-300
+            gamma[t] = [g / s for g in gamma[t]]
+        xi_sum = [[0.0] * n for _ in range(n)]
+        for t in range(T - 1):
+            at, bt1, Bt1 = alpha[t], beta[t + 1], B[t + 1]
+            tot = 0.0
+            cell = [[at[r] * A[r][c] * Bt1[c] * bt1[c] for c in range(n)] for r in range(n)]
+            tot = sum(sum(row) for row in cell) or 1e-300
+            for r in range(n):
+                for c in range(n):
+                    xi_sum[r][c] += cell[r][c] / tot
+        # M-step
+        for r in range(n):
+            den = sum(xi_sum[r]) or 1e-300
+            A[r] = [xi_sum[r][c] / den for c in range(n)]
+        for k in range(n):
+            den = sum(gamma[t][k] for t in range(T)) or 1e-300
+            mu = sum(gamma[t][k] * obs[t] for t in range(T)) / den
+            var = sum(gamma[t][k] * (obs[t] - mu) ** 2 for t in range(T)) / den
+            mus[k], vars_[k] = mu, max(var, 1e-6)
+        pi = gamma[0][:]
+    return pi, A, mus, vars_
+
+
+def hmm_filter_step(
+    probs: list[float], A: list[list[float]], mus: list[float],
+    vars_: list[float], x: float,
+) -> list[float]:
+    """One forward-filter update: predict through ``A`` then condition on ``x``."""
+    n = len(probs)
+    up = [sum(probs[r] * A[r][c] for r in range(n)) * _gauss(x, mus[c], vars_[c])
+          for c in range(n)]
+    s = sum(up) or 1e-300
+    return [u / s for u in up]
+
+
+def hmm_read(
+    params: tuple[list[float], list[list[float]], list[float], list[float]],
+    probs: list[float], on: str,
+) -> HMMState:
+    """Build the snippet-facing :class:`HMMState` from filtered ``probs``."""
+    _, A, mus, vars_ = params
+    n = len(mus)
+    order = sorted(range(n), key=lambda k: mus[k])      # calmest/most-bearish first
+    pred = [sum(probs[r] * A[r][c] for r in range(n)) for c in range(n)]
+    p_bear, p_bull = pred[order[0]], pred[order[-1]]
+    p_side = max(0.0, 1.0 - p_bear - p_bull)
+    cur = max(range(n), key=lambda k: probs[k])
+    lo_name, hi_name = ("CALM", "WILD") if on == "absret" else ("BEAR", "BULL")
+    state = lo_name if cur == order[0] else hi_name if cur == order[-1] else "SIDE"
+    sig_lo = math.sqrt(vars_[order[0]]) or 1e-9
+    return HMMState(state, p_bull, p_bear, p_side, p_bull - p_bear,
+                    A[cur][cur], math.sqrt(vars_[cur]),
+                    math.sqrt(vars_[order[-1]]) / sig_lo)
+
+
 _DECISIONS = {
     "BUY": "BUY", "LONG": "BUY",
     "SELL": "SELL", "SHORT": "SELL",
@@ -477,6 +696,9 @@ class CompiledStrategy:
         self.last_scale_be: bool = False
         # Optional trailing stop (price-distance) on the runner after a scale-out.
         self.last_trail_dist: float = 0.0
+        # Walk-forward HMM cache: (states, window, refit, on) -> fit + filter state.
+        # Lives on the instance so the per-bar forward filter advances O(1).
+        self._hmm_cache: dict[tuple, dict] = {}
 
     def decide(
         self, index: int, candles: Sequence[Candle], *,
@@ -503,7 +725,9 @@ class CompiledStrategy:
         if not window:
             return None
         bar = window[-1]
-        ctx = _Indicators(window)
+        dvals = self._exo.get("delta") or []
+        dwin = list(dvals[max(0, index - LOOKBACK + 1) : index + 1]) if dvals else []
+        ctx = _Indicators(window, deltas=dwin if len(dwin) == len(window) else [])
         exo_at = {name: (vals[index] if 0 <= index < len(vals) else math.nan)
                   for name, vals in self._exo.items()}
 
@@ -519,6 +743,42 @@ class CompiledStrategy:
                 _mc.append([c.close for c in candles[max(0, index + 1 - _MARKOV_SLICE) : index + 1]])
             return compute_markov(_mc[0], state_lookback, bull_thr, bear_thr,
                                   horizon, window, band)
+
+        def hmm(states: int = 3, window: int = HMM_WINDOW, refit: int = HMM_REFIT,
+                on: str = "ret") -> HMMState:
+            """Walk-forward Gaussian-HMM regime read at the current bar.
+
+            Re-fits Baum-Welch every ``refit`` bars on the trailing ``window``
+            returns (only bars ≤ the current one), and advances the filtered
+            state distribution bar-by-bar in between, so a sequential backtest
+            pays O(1) per bar. ``on='absret'`` fits return MAGNITUDES → a
+            volatility-regime model (CALM/WILD) for cascade detection.
+            """
+            n = max(2, min(int(states), 4))
+            mode = "absret" if on == "absret" else "ret"
+            key = (n, int(window), max(1, int(refit)), mode)
+            st = self._hmm_cache.get(key)
+            bucket = index // key[2]
+            if st is None or st["bucket"] != bucket or st["at"] > index:
+                closes = [c.close for c in candles[max(0, index - key[1] - 1) : index + 1]]
+                obs = _hmm_obs(closes, mode)
+                params = fit_hmm(obs, n)
+                if params is None:
+                    return _HMM_NEUTRAL
+                probs = list(params[0])
+                for x in obs:
+                    probs = hmm_filter_step(probs, params[1], params[2], params[3], x)
+                st = {"bucket": bucket, "at": index, "params": params, "probs": probs}
+                self._hmm_cache[key] = st
+            elif st["at"] < index:
+                closes = [c.close for c in candles[max(0, st["at"] - 1) : index + 1]]
+                # advance over only the bars seen since the cached filter state
+                new_obs = _hmm_obs(closes, mode)[-(index - st["at"]):]
+                p = st["probs"]
+                for x in new_obs:
+                    p = hmm_filter_step(p, st["params"][1], st["params"][2], st["params"][3], x)
+                st["probs"], st["at"] = p, index
+            return hmm_read(st["params"], st["probs"], mode)
 
         ns: dict[str, object] = {
             "__builtins__": _SAFE_BUILTINS,
@@ -544,8 +804,19 @@ class CompiledStrategy:
             # auction-market-theory toolkit: volume-by-price map + order-flow CVD
             "volume_profile": ctx.volume_profile, "cvd": ctx.cvd,
             "cvd_divergence": ctx.cvd_divergence,
+            # REAL taker-flow order-flow (Binance perp seeds): per-bar delta +
+            # rolling sum / volume-normalized pressure in [−1, +1]
+            "delta": exo_at.get("delta", math.nan),
+            "flow": ctx.flow, "flow_norm": ctx.flow_norm,
+            # macro regime overlays: % distance to the 50-day / 200-day SMA of
+            # completed DAILY closes (walk-forward; 0.0 until enough days exist)
+            "macro": exo_at.get("macro", math.nan),
+            "macro_slow": exo_at.get("macro_slow", math.nan),
+            # intraday microstructure levels (opening range + prior-session range)
+            "opening_range": ctx.opening_range, "prev_day_range": ctx.prev_day_range,
             "crossover": crossover, "crossunder": crossunder,
             "markov": markov,  # hedge-fund regime engine → Regime(state, p_bull, ...)
+            "hmm": hmm,        # latent-state Gaussian HMM → HMMState(state, edge, ...)
             # bar clock (UTC) for session filters
             "hour": int(bar.time.hour), "minute": int(bar.time.minute),
             "dow": int(bar.time.weekday()),
