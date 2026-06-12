@@ -20,10 +20,11 @@ const MARKETS = ["US500", "NAS100", "EURUSD", "GBPUSD", "FTSE100", "DAX40"];
 const LOCAL_INSTRUMENTS = ["US500", "NAS100", "XAUUSD", "BTCUSD", "ETHUSD", "FTSE100", "EURUSD"]; // local offline data
 const LOCAL_MARKETS = new Set(LOCAL_INSTRUMENTS);
 const LIVE_TF: [number, string][] = [[5, "5m"], [15, "15m"], [30, "30m"], [60, "1h"]];
-const LOCAL_TF: [number, string][] = [[1440, "Daily"], [60, "1h"], [15, "15m"], [5, "5m"]];
+const LOCAL_TF: [number, string][] = [[1440, "Daily"], [240, "4h"], [60, "1h"], [15, "15m"], [5, "5m"]];
 const SPEEDS: [number, string][] = [[1, "1×"], [3, "3×"], [8, "8×"], [20, "20×"]];
 function tfLabel(minutes?: number): string {
   if (minutes === 1440) return "D1";
+  if (minutes === 240) return "4h";
   if (minutes === 60) return "1h";
   return `${minutes ?? 0}m`;
 }

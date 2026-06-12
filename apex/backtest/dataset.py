@@ -31,8 +31,9 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 EXO_FIELDS: tuple[str, ...] = ("fear_greed", "vix", "sentiment", "delta", "macro", "macro_slow")
 
 #: Candle-minutes → on-disk file suffix. Daily is the deep (20y) series; intraday
-#: depth varies per instrument (crypto perp seeds reach 2020 on 1h/15m).
-TF_SUFFIX: dict[int, str] = {1440: "D1", 60: "60m", 15: "15m", 5: "5m", 1: "1m"}
+#: depth varies per instrument (crypto perp seeds reach 2020 on 1h/15m; 240m is
+#: resampled from the 1h seeds by ``scripts/seed_4h_resample.py``).
+TF_SUFFIX: dict[int, str] = {1440: "D1", 240: "240m", 60: "60m", 15: "15m", 5: "5m", 1: "1m"}
 
 
 def suffix_for(minutes: int) -> str:

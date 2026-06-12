@@ -53,7 +53,7 @@ start. No terminal env editing required.
 - Trading modules stay LOCKED until UI onboarding completes (`onboarding_complete`).
 
 ## Current Phase
-v1.1 — Web-UI onboarding state + prop-firm RiskEngine (PropGuard) complete. App
+v1.2 — Web-UI onboarding state + prop-firm RiskEngine (PropGuard) complete. App
 launches unconfigured; IG/Claude keys + risk profile entered & validated in the UI,
 saved encrypted; heartbeat gated behind completion. `prop_ftmo` profile: 0.4%/trade,
 −3% daily / −8% total floating-DD breaker (liquidate + lock at 0.5% buffer).
