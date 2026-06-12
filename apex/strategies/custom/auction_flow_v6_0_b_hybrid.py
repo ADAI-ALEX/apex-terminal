@@ -1,4 +1,4 @@
-# name: Auction Flow V6.b-Hybrid (15M)
+# name: Auction Flow V6.0.b-Hybrid (15M)
 # description: Phase-2 timeframe compression — the V5.2 HYBRID (gated-runner) architecture on the 15-minute chart. Volume profile / POC / value area on 15M. Execution = V5.2: bank 50% at the POC, then a CVD velocity gate (15% STRICTER here to reject rogue 15M volume spikes) decides whether to arm the BE + 1.5-ATR trail to the VAH or flatten the runner. Divergence-weighted 0.8-1.4% sizing (matched to V6.a). Daily breaker -4.0%, lifetime backstop -9.0%, long-only, no overnight. US500 15M. A/B partner of V6.a-Base.
 #
 # ── A/B test design ──────────────────────────────────────────────────────────

@@ -56,3 +56,9 @@ Thumbs.db
 apex/backtest/data/.binance_cache/
 apex/backtest/data/*.bak
 apex/backtest/data/*_1m.csv
+
+# FTMO VM deploy artifacts
+.claude/scheduled_tasks.lock
+*_state.json
+screen.png
+server_info.txt

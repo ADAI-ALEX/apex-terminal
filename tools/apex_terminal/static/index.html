@@ -1,0 +1,408 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>APEX COMMAND TERMINAL</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script>
+tailwind.config = { theme: { extend: {
+  colors: { bg:'#07090c', panel:'#0d1117', line:'#1c2530', neon:'#2dff8a',
+            amber:'#ffb224', red:'#ff4d5e', dim:'#5b6b7d', txt:'#c7d2dd' },
+  fontFamily: { mono: ['"JetBrains Mono"','ui-monospace','monospace'] }
+}}};
+</script>
+<style>
+  html,body{height:100%;overflow:hidden;background:#07090c}
+  body{background-image:radial-gradient(ellipse 80% 50% at 50% -10%,rgba(45,255,138,.045),transparent)}
+  .glow-g{text-shadow:0 0 8px rgba(45,255,138,.45)} .glow-a{text-shadow:0 0 8px rgba(255,178,36,.45)}
+  .card{background:#0d1117;border:1px solid #1c2530;border-radius:6px;display:flex;flex-direction:column;min-height:0}
+  .card-h{border-bottom:1px solid #1c2530;padding:.4rem .7rem;display:flex;align-items:center;justify-content:space-between;flex:none}
+  .card-b{padding:.6rem .7rem;flex:1;min-height:0;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#1c2530 transparent}
+  .lbl{font-size:9.5px;letter-spacing:.14em;color:#5b6b7d;text-transform:uppercase}
+  .pill{font-size:9.5px;letter-spacing:.08em;padding:1px 7px;border-radius:3px;border:1px solid;white-space:nowrap}
+  .pill-on{color:#2dff8a;border-color:rgba(45,255,138,.35);background:rgba(45,255,138,.07)}
+  .pill-off{color:#ff4d5e;border-color:rgba(255,77,94,.35);background:rgba(255,77,94,.07)}
+  .pill-dim{color:#5b6b7d;border-color:#1c2530}
+  .bar-track{height:5px;background:#161d26;border-radius:99px;overflow:hidden}
+  .bar-fill{height:100%;border-radius:99px;transition:width .6s ease,background .6s ease}
+  .term{font-size:10.5px;line-height:1.5;overflow-y:auto;white-space:pre-wrap;word-break:break-all;
+        scrollbar-width:thin;scrollbar-color:#1c2530 transparent;flex:1;min-height:0}
+  .term::-webkit-scrollbar,.card-b::-webkit-scrollbar{width:6px}
+  .term::-webkit-scrollbar-thumb,.card-b::-webkit-scrollbar-thumb{background:#1c2530;border-radius:3px}
+  .btn{font-size:11px;letter-spacing:.12em;border-radius:4px;border:1px solid;transition:all .15s;text-transform:uppercase;font-weight:600}
+  .btn:disabled{opacity:.3;cursor:not-allowed;filter:grayscale(.8)}
+  .btn-g{color:#06130b;background:#2dff8a;border-color:#2dff8a;box-shadow:0 0 14px rgba(45,255,138,.35)}
+  .btn-g:hover:not(:disabled){background:#52ffa0}
+  .btn-r{color:#160608;background:#ff4d5e;border-color:#ff4d5e;box-shadow:0 0 14px rgba(255,77,94,.35)}
+  .btn-r:hover:not(:disabled){background:#ff6b79}
+  .btn-y{color:#171002;background:#ffb224;border-color:#ffb224;box-shadow:0 0 12px rgba(255,178,36,.3)}
+  .btn-y:hover:not(:disabled){background:#ffc352}
+  .btn-ghost{color:#8b9bac;background:transparent;border-color:#2a3744}
+  .btn-ghost:hover:not(:disabled){background:#161d26}
+  .inp{background:#10151c;border:1px solid #1c2530;border-radius:4px;padding:.3rem .5rem;font-size:11px;color:#c7d2dd;width:100%}
+  .inp:focus{outline:none;border-color:rgba(45,255,138,.45)}
+  .inp:disabled{opacity:.45}
+  .tab{font-size:10px;letter-spacing:.1em;padding:.25rem .8rem;border-radius:4px 4px 0 0;cursor:pointer;color:#5b6b7d;border:1px solid transparent}
+  .tab-on{color:#2dff8a;background:#10151c;border-color:#1c2530;border-bottom-color:#10151c}
+  .blink{animation:blink 1.2s steps(1) infinite}@keyframes blink{50%{opacity:0}}
+  .toggle{width:32px;height:17px;border-radius:99px;background:#1c2530;position:relative;cursor:pointer;transition:background .2s;flex:none}
+  .toggle.on{background:rgba(255,178,36,.85)}
+  .toggle::after{content:'';position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:99px;background:#c7d2dd;transition:left .2s}
+  .toggle.on::after{left:17px}
+</style>
+</head>
+<body class="font-mono text-txt flex flex-col p-2.5 gap-2.5">
+
+<!-- â”€â”€ header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+<header class="flex items-center justify-between px-1 flex-none">
+  <div class="flex items-center gap-3">
+    <svg width="18" height="18" viewBox="0 0 64 64"><rect width="64" height="64" rx="13" fill="#0a0e13" stroke="#1c2530"/><path d="M32 12 L50 48 H40.5 L32 30.5 L23.5 48 H14 Z" fill="#2dff8a"/><rect x="28.6" y="51" width="6.8" height="3.4" rx="1" fill="#ffb224"/></svg>
+    <div class="text-neon glow-g font-bold tracking-[.25em] text-[13px]">APEX<span class="text-txt">â–®</span>COMMAND TERMINAL</div>
+    <div class="lbl hidden lg:block">V4 INSTITUTIONAL Â· FTMO MT5 Â· ORACLE VM</div>
+  </div>
+  <div class="flex items-center gap-4 text-[11px]">
+    <span class="text-dim hidden md:block">ubuntu@<VM-IP></span>
+    <span class="flex items-center gap-1.5"><span id="connDot" class="w-2 h-2 rounded-full bg-red"></span><span id="connTxt" class="text-dim">LINKâ€¦</span></span>
+    <span id="clock" class="text-neon glow-g tabular-nums">--:--:--</span><span class="lbl">UTC</span>
+  </div>
+</header>
+
+<!-- â”€â”€ rigid grid: row1 = health|control|guardrails, col4 = config; row2 = logs â”€â”€ -->
+<main class="flex-1 min-h-0 grid grid-cols-12 grid-rows-[minmax(0,5fr)_minmax(0,7fr)] gap-2.5">
+
+  <!-- system health -->
+  <section class="card col-span-3">
+    <div class="card-h"><span class="lbl">â¬¡ System Health</span><span id="uptime" class="lbl"></span></div>
+    <div class="card-b space-y-2">
+      <div id="resBars" class="space-y-2"><div class="lbl">probing vmâ€¦</div></div>
+      <div class="border-t border-line pt-1.5">
+        <div id="topoGrid" class="grid grid-cols-2 gap-1"></div>
+      </div>
+      <div id="tmuxRow" class="flex flex-wrap gap-1"></div>
+    </div>
+  </section>
+
+  <!-- control: state machine -->
+  <section class="card col-span-3">
+    <div class="card-h"><span class="lbl">â¬¡ Algorithm Control</span><span id="ctlState" class="pill pill-dim">SYNCING</span></div>
+    <div class="card-b flex flex-col gap-2">
+      <div class="grid grid-cols-2 gap-2 flex-none">
+        <button id="btnPrimary" class="btn btn-g py-3" disabled>â€¦</button>
+        <button id="btnRestart" class="btn btn-ghost py-3" disabled>âŸ³ RESTART</button>
+      </div>
+      <div id="ctlMsg" class="text-[10.5px] text-dim min-h-[14px] flex-none"></div>
+      <div id="runtimeBox" class="border border-line rounded p-2 grid grid-cols-2 gap-y-1.5 text-[10.5px] flex-1 content-start hidden">
+        <span class="lbl self-center">Runtime</span><span id="rtClock" class="text-neon glow-g tabular-nums text-right text-[13px]">--:--:--</span>
+        <span class="lbl self-center">Since toggle</span><span id="rtToggle" class="text-txt tabular-nums text-right">â€”</span>
+        <span class="lbl self-center">BTC engine</span><span id="rtBtc" class="text-right"></span>
+        <span class="lbl self-center">US500 engine</span><span id="rtUs" class="text-right"></span>
+      </div>
+      <div id="offlineBox" class="border border-line rounded p-2 flex-1 flex items-center justify-center">
+        <span class="text-dim text-[10.5px] tracking-[.2em]">ENGINE OFFLINE â€” STANDBY</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- guardrails -->
+  <section class="card col-span-3">
+    <div class="card-h"><span class="lbl">â¬¡ FTMO Guardrails</span><span id="modePill" class="pill pill-dim">MODE ?</span></div>
+    <div class="card-b space-y-2" id="guardBody"><div class="lbl">awaiting telemetryâ€¦</div></div>
+  </section>
+
+  <!-- config (full right column) -->
+  <section class="card col-span-3 row-span-2">
+    <div class="card-h"><span class="lbl">â¬¡ Remote .env Config</span><span id="envSrc" class="pill pill-dim">SYNCING</span></div>
+    <div class="card-b space-y-1.5" id="envForm">
+      <div><div class="lbl mb-0.5">FTMO Login</div><input id="f_MT5_LOGIN" class="inp" disabled></div>
+      <div><div class="lbl mb-0.5">Password</div>
+        <div class="flex gap-1"><input id="f_MT5_PASSWORD" type="password" class="inp" disabled>
+        <button class="btn btn-ghost px-2 text-[10px]" onclick="togglePw(event)">ðŸ‘</button></div></div>
+      <div><div class="lbl mb-0.5">Server</div><input id="f_MT5_SERVER" class="inp" disabled></div>
+      <div class="grid grid-cols-2 gap-1.5">
+        <div><div class="lbl mb-0.5">BTC Symbol</div><input id="f_BTC_SYMBOL" class="inp" disabled></div>
+        <div><div class="lbl mb-0.5">US500 Symbol</div><input id="f_US500_SYMBOL" class="inp" disabled></div>
+      </div>
+      <div class="grid grid-cols-2 gap-1.5">
+        <div><div class="lbl mb-0.5">UTC Offset</div><input id="f_SERVER_UTC_OFFSET_HOURS" class="inp" disabled></div>
+        <div><div class="lbl mb-0.5">Poll Secs</div><input id="f_POLL_SECONDS" class="inp" disabled></div>
+      </div>
+      <input type="hidden" id="f_MT5_PATH"><input type="hidden" id="f_MAGIC_BTC"><input type="hidden" id="f_MAGIC_US500">
+      <div class="flex items-center justify-between border border-line rounded p-2">
+        <div><div class="text-[10.5px] text-amber glow-a font-medium tracking-wider">CHALLENGE MODE</div>
+        <div class="text-[9px] text-dim">eval window only â€” z0.8/f0.01/cap6</div></div>
+        <div id="chToggle" class="toggle" onclick="toggleChallenge()"></div>
+      </div>
+      <div class="grid grid-cols-2 gap-1.5">
+        <button id="btnReload" class="btn btn-ghost py-1.5" onclick="loadEnv(true)">âŸ² Reload</button>
+        <button id="btnSave" class="btn btn-g py-1.5" onclick="saveEnv()" disabled>âœ“ Write</button>
+      </div>
+      <div id="envMsg" class="text-[10px] min-h-[14px] text-dim"></div>
+    </div>
+  </section>
+
+  <!-- logs -->
+  <section class="card col-span-9">
+    <div class="card-h">
+      <div class="flex items-end gap-1">
+        <span class="lbl mr-2">â¬¡ Live Streams</span>
+        <div class="tab tab-on" id="tab-btc" onclick="showTab('btc')">GLOBAL_MACRO_V4 Â· BTC H4</div>
+        <div class="tab" id="tab-us500" onclick="showTab('us500')">AUCTION_FLOW_V5.1 Â· US500 H1</div>
+      </div>
+      <label class="flex items-center gap-1.5 text-[9.5px] text-dim cursor-pointer">
+        <input type="checkbox" id="autoScroll" checked class="accent-emerald-400 w-3 h-3">AUTOSCROLL
+      </label>
+    </div>
+    <div class="flex-1 min-h-0 relative flex">
+      <div id="term-btc"   class="term p-2.5"></div>
+      <div id="term-us500" class="term p-2.5 hidden"></div>
+      <span class="absolute bottom-1.5 right-3 text-neon blink text-[11px]">â–®</span>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+setInterval(()=>{ $("clock").textContent = new Date().toISOString().substring(11,19); },1000);
+
+/* â•â•â•â• connection â•â•â•â• */
+function setConn(ok){
+  $("connDot").className = "w-2 h-2 rounded-full " + (ok ? "bg-[#2dff8a] shadow-[0_0_6px_#2dff8a]" : "bg-[#ff4d5e]");
+  $("connTxt").textContent = ok ? "SSH LINK UP" : "LINK DOWN";
+  $("connTxt").className = ok ? "text-neon" : "text-red";
+}
+
+/* â•â•â•â• engine state machine â•â•â•â• */
+let engine = { running:null, created:0, busy:false, lastToggle:null };
+function fmtDur(s){
+  if(s<0||!isFinite(s)) return "--:--:--";
+  const h=Math.floor(s/3600), m=Math.floor(s%3600/60), x=Math.floor(s%60);
+  return (h<10?"0":"")+h+":"+(m<10?"0":"")+m+":"+(x<10?"0":"")+x;
+}
+setInterval(()=>{          /* live runtime tickers */
+  if(engine.running && engine.created)
+    $("rtClock").textContent = fmtDur(Date.now()/1000 - engine.created);
+  if(engine.lastToggle)
+    $("rtToggle").textContent = fmtDur((Date.now()-engine.lastToggle)/1000) + " ago";
+},1000);
+
+function renderControls(){
+  const p = $("btnPrimary"), r = $("btnRestart");
+  if(engine.busy){
+    p.disabled = r.disabled = true;
+    return;
+  }
+  if(engine.running === null){            /* unknown yet */
+    p.className = "btn btn-ghost py-3"; p.textContent = "SYNCINGâ€¦"; p.disabled = true;
+    r.className = "btn btn-ghost py-3"; r.disabled = true;
+    return;
+  }
+  if(engine.running){                     /* STATE B â€” running */
+    p.className = "btn btn-r py-3"; p.textContent = "â–  STOP"; p.disabled = false;
+    p.onclick = ()=> execControl("stop");                       /* immediate, no confirm */
+    r.className = "btn btn-y py-3"; r.disabled = false;
+    r.onclick = ()=>{ if(confirm("Are you sure you want to restart the active trading engine?")) execControl("restart"); };
+    $("ctlState").className = "pill pill-on"; $("ctlState").textContent = "STACK LIVE";
+    $("runtimeBox").classList.remove("hidden"); $("offlineBox").classList.add("hidden");
+  } else {                                /* STATE A â€” stopped */
+    p.className = "btn btn-g py-3"; p.textContent = "â–¶ START"; p.disabled = false;
+    p.onclick = ()=>{ if(confirm("Are you sure you want to initialize live trading operations?")) execControl("start"); };
+    r.className = "btn btn-ghost py-3"; r.disabled = true; r.onclick = null;
+    $("ctlState").className = "pill pill-off"; $("ctlState").textContent = "STACK DOWN";
+    $("runtimeBox").classList.add("hidden"); $("offlineBox").classList.remove("hidden");
+  }
+}
+async function execControl(action){
+  engine.busy = true; renderControls();
+  $("ctlMsg").innerHTML = `<span class="text-amber glow-a">âŸ³ ${action} in progressâ€¦</span>`;
+  try{
+    const r = await fetch("/api/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});
+    const d = await r.json();
+    $("ctlMsg").innerHTML = d.ok
+      ? `<span class="text-neon glow-g">âœ“ ${esc(d.result||"ok")}</span>`
+      : `<span class="text-red">âœ• ${esc(d.result||d.error||"failed")}${d.result==="NO_ENV"?" â€” write .env first":""}</span>`;
+    if(d.ok) engine.lastToggle = Date.now();
+  }catch(e){ $("ctlMsg").innerHTML = `<span class="text-red">âœ• ${esc(String(e))}</span>`; }
+  engine.busy = false;
+  setTimeout(pollHealth, 2500);
+}
+
+/* â•â•â•â• health â•â•â•â• */
+function barColor(p){ return p < 60 ? "#2dff8a" : p < 85 ? "#ffb224" : "#ff4d5e"; }
+function barRow(label, pct, detail){
+  return `<div><div class="flex justify-between mb-0.5"><span class="lbl">${label}</span>
+    <span class="text-[10px] tabular-nums" style="color:${barColor(pct)}">${detail}</span></div>
+    <div class="bar-track"><div class="bar-fill" style="width:${Math.min(pct,100)}%;background:${barColor(pct)}"></div></div></div>`;
+}
+function topoCell(name, on, extra){
+  return `<div class="flex items-center justify-between border border-line rounded px-1.5 py-1">
+    <span class="text-[9.5px] text-dim">${name}</span>
+    <span class="pill ${on ? "pill-on" : "pill-off"}">${on ? (extra||"UP") : "DOWN"}</span></div>`;
+}
+async function pollHealth(){
+  try{
+    const r = await fetch("/api/health"); const d = await r.json();
+    if(!d.ok) throw new Error(d.error);
+    setConn(true);
+    const memP = d.mem.total ? 100*d.mem.used/d.mem.total : 0;
+    const swpP = d.swap.total ? 100*d.swap.used/d.swap.total : 0;
+    $("resBars").innerHTML =
+      barRow("CPU", d.cpu, d.cpu.toFixed(1)+"% Â· ld "+d.load1) +
+      barRow("RAM", memP, `${d.mem.used}/${d.mem.total} MB`) +
+      barRow("SWAP", swpP, `${d.swap.used}/${d.swap.total} MB`);
+    $("uptime").textContent = (d.uptime||"").replace("up ","VM UP ").toUpperCase();
+    const t = d.topology||{};
+    $("topoGrid").innerHTML =
+      topoCell("WINE", t.PREFIX>0, "READY") + topoCell("MT5 TERM", t.MT5>0) +
+      topoCell("XVFB", t.XVFB>0) + topoCell("TMUX", d.tmux.session, "ACTIVE") +
+      topoCell("BTC ENG", t.BTC>0, "LIVE") + topoCell("US500 ENG", t.US500>0, "LIVE");
+    $("tmuxRow").innerHTML = d.tmux.session
+      ? d.tmux.windows.map(w=>`<span class="pill ${w.dead?"pill-off":"pill-on"}">${esc(w.name)}${w.dead?" âœ•":""}</span>`).join("")
+      : '<span class="pill pill-off">NO TMUX SESSION</span>';
+    /* feed the state machine */
+    engine.running = (t.BTC>0 || t.US500>0);
+    engine.created = d.tmux.created||0;
+    $("rtBtc").innerHTML = `<span class="pill ${t.BTC>0?"pill-on":"pill-off"}">${t.BTC>0?"LIVE":"DOWN"}</span>`;
+    $("rtUs").innerHTML = `<span class="pill ${t.US500>0?"pill-on":"pill-off"}">${t.US500>0?"LIVE":"DOWN"}</span>`;
+    renderControls();
+  }catch(e){ setConn(false); }
+}
+
+/* â•â•â•â• guardrails â•â•â•â• */
+const LIMITS = {
+  btc:   {day:2.0, dd:7.5, capC:6, capI:4, name:"BTC Â· GLOBAL MACRO V4"},
+  us500: {day:3.2, dd:9.0, capC:50, capI:50, name:"US500 Â· AUCTION FLOW V5.1"},
+};
+function gauge(label, val, lim){
+  const v = Math.abs(val); const p = lim ? Math.min(100*v/lim,100) : 0;
+  const col = p < 50 ? "#2dff8a" : p < 80 ? "#ffb224" : "#ff4d5e";
+  return `<div><div class="flex justify-between mb-0.5">
+    <span class="text-[9px] text-dim">${label}</span>
+    <span class="text-[9.5px] tabular-nums" style="color:${col}">${val.toFixed(2)}% / ${lim}%</span></div>
+    <div class="bar-track"><div class="bar-fill" style="width:${p}%;background:${col}"></div></div></div>`;
+}
+async function pollGuard(){
+  try{
+    const r = await fetch("/api/guardrails"); const d = await r.json();
+    if(!d.ok) throw new Error(d.error);
+    const ch = d.challenge_mode;
+    $("modePill").className = "pill " + (ch ? "pill-on" : "pill-dim");
+    $("modePill").textContent = ch ? "CHALLENGE" : "INSTITUTIONAL";
+    let html = "";
+    for(const leg of ["btc","us500"]){
+      const L = LIMITS[leg], st = d[leg].state||{}, bar = d[leg].bar||{};
+      const day = bar.day!==undefined ? Math.min(bar.day,0) : 0;
+      const dd  = bar.dd !==undefined ? bar.dd  : 0;
+      const cap = ch ? L.capC : L.capI;
+      const trades = st.trades_today!==undefined ? st.trades_today : (bar.trades||0);
+      const eq = st.peak_equity ? `peak ${Number(st.peak_equity).toLocaleString(undefined,{maximumFractionDigits:0})}` : "no state yet";
+      html += `<div class="border border-line rounded p-2 space-y-1">
+        <div class="flex justify-between items-center">
+          <span class="text-[9.5px] tracking-wider text-txt">${L.name}</span>
+          <span class="text-[9px] text-dim">${eq}</span></div>
+        ${gauge("DAILY DD â†’ lock", day, L.day)}
+        ${gauge("PEAK DD â†’ halt", dd, L.dd)}
+        <div class="flex justify-between text-[9.5px]">
+          <span class="text-dim">TRADES TODAY</span>
+          <span class="tabular-nums" style="color:${trades>=cap?"#ff4d5e":"#2dff8a"}">${trades} / ${cap}</span></div></div>`;
+    }
+    html += `<div class="text-[8.5px] text-dim leading-relaxed">Account walls: FTMO âˆ’5% daily / âˆ’10% total. Governors sit inside them.</div>`;
+    $("guardBody").innerHTML = html;
+  }catch(e){ /* keep last view */ }
+}
+
+/* â•â•â•â• log terminals â•â•â•â• */
+const MAXLINES = 1200;
+function showTab(leg){
+  for(const l of ["btc","us500"]){
+    $("tab-"+l).className = "tab" + (l===leg ? " tab-on" : "");
+    $("term-"+l).classList.toggle("hidden", l!==leg);
+  }
+  const t = $("term-"+leg); if($("autoScroll").checked) t.scrollTop = t.scrollHeight;
+}
+function colorize(line){
+  const e = esc(line);
+  if(/ERROR|FAILED|rejected|HALT|breaker|Traceback/i.test(line)) return `<span class="text-red">${e}</span>`;
+  if(/WARNING|skipped|fallback|locked|retry/i.test(line)) return `<span class="text-amber">${e}</span>`;
+  if(/LONG |CLOSE |BUY|scale@|trail:|break-even|connected/.test(line)) return `<span class="text-neon">${e}</span>`;
+  return `<span class="text-[#8b9bac]">${e}</span>`;
+}
+function connectWS(leg){
+  const term = $("term-"+leg);
+  const ws = new WebSocket(`ws://${location.host}/ws/logs/${leg}`);
+  ws.onmessage = ev=>{
+    const div = document.createElement("div");
+    div.innerHTML = colorize(ev.data);
+    term.appendChild(div);
+    while(term.childNodes.length > MAXLINES) term.removeChild(term.firstChild);
+    if($("autoScroll").checked && !term.classList.contains("hidden")) term.scrollTop = term.scrollHeight;
+  };
+  ws.onclose = ()=> setTimeout(()=>connectWS(leg), 4000);
+}
+
+/* â•â•â•â• reactive .env panel â•â•â•â• */
+const ENV_FIELDS = ["MT5_LOGIN","MT5_PASSWORD","MT5_SERVER","MT5_PATH","BTC_SYMBOL","US500_SYMBOL",
+                    "SERVER_UTC_OFFSET_HOURS","MAGIC_BTC","MAGIC_US500","POLL_SECONDS"];
+const dirty = new Set();
+let envLoaded = false;
+ENV_FIELDS.forEach(k=>{ const el = $("f_"+k); if(el) el.addEventListener("input", ()=>dirty.add(k)); });
+function setChallenge(on){ $("chToggle").classList.toggle("on", !!on); $("chToggle").dataset.v = on ? "true" : "false"; }
+function toggleChallenge(){ setChallenge($("chToggle").dataset.v !== "true"); dirty.add("CHALLENGE_MODE"); }
+function togglePw(ev){ ev.preventDefault(); const f = $("f_MT5_PASSWORD"); f.type = f.type==="password" ? "text" : "password"; }
+function setFormEnabled(on){
+  ENV_FIELDS.forEach(k=>{ const el = $("f_"+k); if(el && el.type!=="hidden") el.disabled = !on; });
+  $("btnSave").disabled = !on;
+}
+async function loadEnv(force=false, attempt=1){
+  if(force) dirty.clear();
+  $("envSrc").textContent = "SYNCING"; $("envSrc").className = "pill pill-dim";
+  try{
+    const r = await fetch("/api/env",{cache:"no-store"}); const d = await r.json();
+    if(!d.ok) throw new Error(d.error);
+    for(const k of ENV_FIELDS){
+      const el = $("f_"+k);
+      if(el && (force || !dirty.has(k)) && document.activeElement !== el) el.value = d.values[k]||"";
+    }
+    if(force || !dirty.has("CHALLENGE_MODE"))
+      setChallenge((d.values.CHALLENGE_MODE||"").toLowerCase()==="true");
+    $("envSrc").textContent = d.source==="env" ? "LIVE FILE" : "TEMPLATE";
+    $("envSrc").className = "pill " + (d.source==="env" ? "pill-on" : "pill-dim");
+    $("envMsg").textContent = "";
+    envLoaded = true; setFormEnabled(true);
+  }catch(e){
+    if(attempt < 3){ setTimeout(()=>loadEnv(force, attempt+1), 1500*attempt); return; }
+    $("envSrc").textContent = "OFFLINE"; $("envSrc").className = "pill pill-off";
+    $("envMsg").innerHTML = `<span class="text-red">âœ• ${esc(String(e))} â€” </span><a class="text-amber underline cursor-pointer" onclick="loadEnv(true)">retry</a>`;
+  }
+}
+async function saveEnv(){
+  const values = {};
+  for(const k of ENV_FIELDS) values[k] = $("f_"+k).value;
+  values.CHALLENGE_MODE = $("chToggle").dataset.v==="true" ? "true" : "false";
+  $("envMsg").innerHTML = '<span class="text-amber">âŸ³ writing to VMâ€¦</span>';
+  try{
+    const r = await fetch("/api/env",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({values})});
+    const d = await r.json();
+    $("envMsg").innerHTML = d.ok
+      ? '<span class="text-neon glow-g">âœ“ saved (chmod 600) â€” restart stack to apply</span>'
+      : `<span class="text-red">âœ• ${esc(d.error||"save failed")}</span>`;
+    if(d.ok){ dirty.clear(); loadEnv(true); }
+  }catch(e){ $("envMsg").innerHTML = `<span class="text-red">âœ• ${esc(String(e))}</span>`; }
+}
+
+/* â•â•â•â• boot: explicit async env fetch + telemetry loops + sockets â•â•â•â• */
+document.addEventListener("DOMContentLoaded", ()=>{
+  loadEnv(true);                       /* immediate reactive bind on page load */
+  pollHealth(); setInterval(pollHealth, 5000);
+  pollGuard();  setInterval(pollGuard, 10000);
+  connectWS("btc"); connectWS("us500");
+});
+</script>
+</body>
+</html>
+

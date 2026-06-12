@@ -1,4 +1,4 @@
-# name: Auction Flow V6.a-Base (15M)
+# name: Auction Flow V6.0.a-Base (15M)
 # description: Phase-2 timeframe compression — the BASE (no-runner) architecture on the 15-minute chart. Volume profile / POC / value area are generated on 15M. Execution is the pure full-exit baseline: when price hits the POC, bank 100% of the position — no scale-out, no runner, no trail. Divergence-weighted 0.8-1.4% sizing (lower, because 15M trades far more often). Daily breaker -4.0%, lifetime backstop -9.0%, long-only, no overnight. US500 15M. A/B partner of V6.b-Hybrid.
 #
 # ── A/B test design ──────────────────────────────────────────────────────────

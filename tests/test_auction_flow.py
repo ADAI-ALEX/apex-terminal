@@ -327,6 +327,39 @@ def test_v6_1_master_long_only_band_and_breaker():
     assert d == "FLAT"
 
 
+def test_intraday_micro_long_only_and_breaker():
+    """Intraday Micro V1 (15M momentum): long-only, -4.0% daily breaker, valid risk."""
+    meta = store.get("intraday_micro_v1")
+    assert meta is not None, "intraday_micro_v1 strategy file must exist"
+    strat = CompiledStrategy(meta.code)
+    candles = _make_series(500)
+    decisions = set()
+    for i in range(60, len(candles)):
+        d, r = strat.decide(i, candles, position=0)
+        decisions.add(d)
+        assert r is None or 0.0 < r <= 10.0
+    assert "SELL" not in decisions                     # long-only (probe: shorts lose)
+    d, _ = strat.decide(300, candles, position=1, day_pnl_pct=-4.1)
+    assert d == "FLAT"                                 # -4.0% hard daily breaker
+
+
+def test_opening_range_and_prev_day_primitives():
+    """opening_range() and prev_day_range() read today's OR and the prior session."""
+    t0 = datetime(2024, 3, 11, 13, 30, tzinfo=timezone.utc)
+    cs = []
+    # Day 1: 13:30-15:00 bars, then Day 2 a few bars.
+    for k in range(8):
+        cs.append(_bar(t0 + timedelta(minutes=15 * k), 100 + k, 101 + k, 99 + k, 100.5 + k, 1000.0))
+    d2 = datetime(2024, 3, 12, 13, 30, tzinfo=timezone.utc)
+    for k in range(6):
+        cs.append(_bar(d2 + timedelta(minutes=15 * k), 110 + k, 111 + k, 109 + k, 110.5 + k, 1000.0))
+    ctx = _Indicators(cs)
+    orng = ctx.opening_range(13, 30, 60)               # day-2 first hour (4 bars)
+    assert float(orng.high) >= float(orng.low)
+    pdr = ctx.prev_day_range()                         # day-1 range
+    assert abs(float(pdr.high) - 108.0) < 2.0          # day-1 high ~ 101+7
+
+
 def test_v6_2_long_only_and_breaker():
     """V6.2 (deep-validated): long-only, 0.8–1.6% band, -4.0% daily breaker."""
     meta = store.get("auction_flow_v6_2_optimized")
