@@ -19,10 +19,21 @@ InpBars=420
 InpDealsDays=50
 EOF
 
-# NO [Common] credentials here: a Login= section makes the terminal attempt a
-# config-file login (silently broken on this build under Wine) INSTEAD of its
-# native auto-reconnect to the account saved via the one-time GUI login.
+# [Common] auto-login: the documented MT5 headless login. This was a no-op on
+# the FIRST attempts because servers.dat had no FTMO records, so the terminal
+# could not resolve SERVER -> an access point. The one-time GUI login
+# (File -> Open an Account) populated servers.dat, so config-file login now
+# resolves and authorizes headlessly — no GUI/xdotool needed on subsequent boots.
 cat > "$CFGDIR/apex_start.ini" <<EOF
+[Common]
+Login=$LOGIN
+Password=$PASS
+Server=${SERVER:-FTMO-Demo}
+ProxyEnable=0
+KeepPrivate=1
+NewsEnable=0
+CertInstall=0
+AutoConfiguration=0
 [Experts]
 AllowLiveTrading=1
 AllowDllImport=0
@@ -38,8 +49,12 @@ EOF
 # regardless of which chart hosts it.
 chmod 600 "$CFGDIR/apex_start.ini"
 
-# Drop any credential-bearing common.ini we previously wrote (it interferes the
-# same way); the terminal regenerates its own.
-[ -f "$CFGDIR/common.ini.orig" ] && cp "$CFGDIR/common.ini.orig" "$CFGDIR/common.ini" \
-  || rm -f "$CFGDIR/common.ini"
-echo "start ini (no-creds) + EA preset written"
+# Mirror into common.ini too: under Wine the /config: switch is read
+# inconsistently, but the terminal ALWAYS reads config\common.ini at startup,
+# so the credentials land via at least one path. Same account as the saved
+# session => no "account has been changed" trading lockout.
+[ -f "$CFGDIR/common.ini" ] && [ ! -f "$CFGDIR/common.ini.orig" ] \
+  && cp "$CFGDIR/common.ini" "$CFGDIR/common.ini.orig"
+cp "$CFGDIR/apex_start.ini" "$CFGDIR/common.ini"
+chmod 600 "$CFGDIR/common.ini"
+echo "start ini (+creds) + common.ini + EA preset written (login $LOGIN @ ${SERVER:-FTMO-Demo})"
