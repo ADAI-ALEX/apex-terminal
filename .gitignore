@@ -69,3 +69,6 @@ server_info.txt
 # (Files stay on disk; this just stops them being committed/pushed.)
 apex/strategies/custom/*.py
 !apex/strategies/custom/.gitkeep
+
+# Local-only project instructions for Claude Code (kept off the public repo)
+/CLAUDE.md
