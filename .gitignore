@@ -62,3 +62,10 @@ apex/backtest/data/*_1m.csv
 *_state.json
 screen.png
 server_info.txt
+
+# ─── Private strategy research library ────────────────────────
+# Strategies authored in the Algorithms editor land here and are kept local-only —
+# this repo packages a single demo strategy in apex/strategies/default/ instead.
+# (Files stay on disk; this just stops them being committed/pushed.)
+apex/strategies/custom/*.py
+!apex/strategies/custom/.gitkeep
