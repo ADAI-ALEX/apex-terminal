@@ -31,6 +31,6 @@ node -e "console.log(require('bcryptjs').hashSync('YOUR_PASSWORD', 12))"
 
 ## How data flows
 
-`/api/stream` (SSE, Node runtime) polls `VPS_URL/state` every 3s with the
-`X-Apex-Secret` header and streams `state` events to the browser. `useStream`
-parses them; components render. No WebSockets (Vercel serverless doesn't hold them).
+The `useStream` hook polls `/api/state`, a short-lived route that reads the latest
+engine state and returns it. Nothing stays open between polls, so no serverless
+function runs while the dashboard is closed.
