@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -57,28 +57,28 @@ tailwind.config = { theme: { extend: {
 </head>
 <body class="font-mono text-txt flex flex-col p-2.5 gap-2.5">
 
-<!-- â”€â”€ header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+<!-- ── header ─────────────────────────────────────────────────────────── -->
 <header class="flex items-center justify-between px-1 flex-none">
   <div class="flex items-center gap-3">
     <svg width="18" height="18" viewBox="0 0 64 64"><rect width="64" height="64" rx="13" fill="#0a0e13" stroke="#1c2530"/><path d="M32 12 L50 48 H40.5 L32 30.5 L23.5 48 H14 Z" fill="#2dff8a"/><rect x="28.6" y="51" width="6.8" height="3.4" rx="1" fill="#ffb224"/></svg>
     <div class="text-neon glow-g font-bold tracking-[.25em] text-[13px]">APEX<span class="text-txt">â–®</span>COMMAND TERMINAL</div>
-    <div class="lbl hidden lg:block">V4 INSTITUTIONAL Â· FTMO MT5 Â· ORACLE VM</div>
+    <div class="lbl hidden lg:block">V4 INSTITUTIONAL · FTMO MT5 · ORACLE VM</div>
   </div>
   <div class="flex items-center gap-4 text-[11px]">
     <span class="text-dim hidden md:block">ubuntu@<VM-IP></span>
-    <span class="flex items-center gap-1.5"><span id="connDot" class="w-2 h-2 rounded-full bg-red"></span><span id="connTxt" class="text-dim">LINKâ€¦</span></span>
+    <span class="flex items-center gap-1.5"><span id="connDot" class="w-2 h-2 rounded-full bg-red"></span><span id="connTxt" class="text-dim">LINK…</span></span>
     <span id="clock" class="text-neon glow-g tabular-nums">--:--:--</span><span class="lbl">UTC</span>
   </div>
 </header>
 
-<!-- â”€â”€ rigid grid: row1 = health|control|guardrails, col4 = config; row2 = logs â”€â”€ -->
+<!-- ── rigid grid: row1 = health|control|guardrails, col4 = config; row2 = logs ── -->
 <main class="flex-1 min-h-0 grid grid-cols-12 grid-rows-[minmax(0,5fr)_minmax(0,7fr)] gap-2.5">
 
   <!-- system health -->
   <section class="card col-span-3">
-    <div class="card-h"><span class="lbl">â¬¡ System Health</span><span id="uptime" class="lbl"></span></div>
+    <div class="card-h"><span class="lbl">⬡ System Health</span><span id="uptime" class="lbl"></span></div>
     <div class="card-b space-y-2">
-      <div id="resBars" class="space-y-2"><div class="lbl">probing vmâ€¦</div></div>
+      <div id="resBars" class="space-y-2"><div class="lbl">probing vm…</div></div>
       <div class="border-t border-line pt-1.5">
         <div id="topoGrid" class="grid grid-cols-2 gap-1"></div>
       </div>
@@ -88,39 +88,39 @@ tailwind.config = { theme: { extend: {
 
   <!-- control: state machine -->
   <section class="card col-span-3">
-    <div class="card-h"><span class="lbl">â¬¡ Algorithm Control</span><span id="ctlState" class="pill pill-dim">SYNCING</span></div>
+    <div class="card-h"><span class="lbl">⬡ Algorithm Control</span><span id="ctlState" class="pill pill-dim">SYNCING</span></div>
     <div class="card-b flex flex-col gap-2">
       <div class="grid grid-cols-2 gap-2 flex-none">
-        <button id="btnPrimary" class="btn btn-g py-3" disabled>â€¦</button>
-        <button id="btnRestart" class="btn btn-ghost py-3" disabled>âŸ³ RESTART</button>
+        <button id="btnPrimary" class="btn btn-g py-3" disabled>…</button>
+        <button id="btnRestart" class="btn btn-ghost py-3" disabled>⟳ RESTART</button>
       </div>
       <div id="ctlMsg" class="text-[10.5px] text-dim min-h-[14px] flex-none"></div>
       <div id="runtimeBox" class="border border-line rounded p-2 grid grid-cols-2 gap-y-1.5 text-[10.5px] flex-1 content-start hidden">
         <span class="lbl self-center">Runtime</span><span id="rtClock" class="text-neon glow-g tabular-nums text-right text-[13px]">--:--:--</span>
-        <span class="lbl self-center">Since toggle</span><span id="rtToggle" class="text-txt tabular-nums text-right">â€”</span>
+        <span class="lbl self-center">Since toggle</span><span id="rtToggle" class="text-txt tabular-nums text-right">—</span>
         <span class="lbl self-center">BTC engine</span><span id="rtBtc" class="text-right"></span>
         <span class="lbl self-center">US500 engine</span><span id="rtUs" class="text-right"></span>
       </div>
       <div id="offlineBox" class="border border-line rounded p-2 flex-1 flex items-center justify-center">
-        <span class="text-dim text-[10.5px] tracking-[.2em]">ENGINE OFFLINE â€” STANDBY</span>
+        <span class="text-dim text-[10.5px] tracking-[.2em]">ENGINE OFFLINE — STANDBY</span>
       </div>
     </div>
   </section>
 
   <!-- guardrails -->
   <section class="card col-span-3">
-    <div class="card-h"><span class="lbl">â¬¡ FTMO Guardrails</span><span id="modePill" class="pill pill-dim">MODE ?</span></div>
-    <div class="card-b space-y-2" id="guardBody"><div class="lbl">awaiting telemetryâ€¦</div></div>
+    <div class="card-h"><span class="lbl">⬡ FTMO Guardrails</span><span id="modePill" class="pill pill-dim">MODE ?</span></div>
+    <div class="card-b space-y-2" id="guardBody"><div class="lbl">awaiting telemetry…</div></div>
   </section>
 
   <!-- config (full right column) -->
   <section class="card col-span-3 row-span-2">
-    <div class="card-h"><span class="lbl">â¬¡ Remote .env Config</span><span id="envSrc" class="pill pill-dim">SYNCING</span></div>
+    <div class="card-h"><span class="lbl">⬡ Remote .env Config</span><span id="envSrc" class="pill pill-dim">SYNCING</span></div>
     <div class="card-b space-y-1.5" id="envForm">
       <div><div class="lbl mb-0.5">FTMO Login</div><input id="f_MT5_LOGIN" class="inp" disabled></div>
       <div><div class="lbl mb-0.5">Password</div>
         <div class="flex gap-1"><input id="f_MT5_PASSWORD" type="password" class="inp" disabled>
-        <button class="btn btn-ghost px-2 text-[10px]" onclick="togglePw(event)">ðŸ‘</button></div></div>
+        <button class="btn btn-ghost px-2 text-[10px]" onclick="togglePw(event)">👁</button></div></div>
       <div><div class="lbl mb-0.5">Server</div><input id="f_MT5_SERVER" class="inp" disabled></div>
       <div class="grid grid-cols-2 gap-1.5">
         <div><div class="lbl mb-0.5">BTC Symbol</div><input id="f_BTC_SYMBOL" class="inp" disabled></div>
@@ -133,12 +133,12 @@ tailwind.config = { theme: { extend: {
       <input type="hidden" id="f_MT5_PATH"><input type="hidden" id="f_MAGIC_BTC"><input type="hidden" id="f_MAGIC_US500">
       <div class="flex items-center justify-between border border-line rounded p-2">
         <div><div class="text-[10.5px] text-amber glow-a font-medium tracking-wider">CHALLENGE MODE</div>
-        <div class="text-[9px] text-dim">eval window only â€” z0.8/f0.01/cap6</div></div>
+        <div class="text-[9px] text-dim">eval window only — z0.8/f0.01/cap6</div></div>
         <div id="chToggle" class="toggle" onclick="toggleChallenge()"></div>
       </div>
       <div class="grid grid-cols-2 gap-1.5">
-        <button id="btnReload" class="btn btn-ghost py-1.5" onclick="loadEnv(true)">âŸ² Reload</button>
-        <button id="btnSave" class="btn btn-g py-1.5" onclick="saveEnv()" disabled>âœ“ Write</button>
+        <button id="btnReload" class="btn btn-ghost py-1.5" onclick="loadEnv(true)">⟲ Reload</button>
+        <button id="btnSave" class="btn btn-g py-1.5" onclick="saveEnv()" disabled>✓ Write</button>
       </div>
       <div id="envMsg" class="text-[10px] min-h-[14px] text-dim"></div>
     </div>
@@ -148,9 +148,9 @@ tailwind.config = { theme: { extend: {
   <section class="card col-span-9">
     <div class="card-h">
       <div class="flex items-end gap-1">
-        <span class="lbl mr-2">â¬¡ Live Streams</span>
-        <div class="tab tab-on" id="tab-btc" onclick="showTab('btc')">GLOBAL_MACRO_V4 Â· BTC H4</div>
-        <div class="tab" id="tab-us500" onclick="showTab('us500')">AUCTION_FLOW_V5.1 Â· US500 H1</div>
+        <span class="lbl mr-2">⬡ Live Streams</span>
+        <div class="tab tab-on" id="tab-btc" onclick="showTab('btc')">GLOBAL_MACRO_V4 · BTC H4</div>
+        <div class="tab" id="tab-us500" onclick="showTab('us500')">AUCTION_FLOW_V5.1 · US500 H1</div>
       </div>
       <label class="flex items-center gap-1.5 text-[9.5px] text-dim cursor-pointer">
         <input type="checkbox" id="autoScroll" checked class="accent-emerald-400 w-3 h-3">AUTOSCROLL
@@ -170,14 +170,14 @@ const $ = id => document.getElementById(id);
 const esc = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
 setInterval(()=>{ $("clock").textContent = new Date().toISOString().substring(11,19); },1000);
 
-/* â•â•â•â• connection â•â•â•â• */
+/* ════ connection ════ */
 function setConn(ok){
   $("connDot").className = "w-2 h-2 rounded-full " + (ok ? "bg-[#2dff8a] shadow-[0_0_6px_#2dff8a]" : "bg-[#ff4d5e]");
   $("connTxt").textContent = ok ? "SSH LINK UP" : "LINK DOWN";
   $("connTxt").className = ok ? "text-neon" : "text-red";
 }
 
-/* â•â•â•â• engine state machine â•â•â•â• */
+/* ════ engine state machine ════ */
 let engine = { running:null, created:0, busy:false, lastToggle:null };
 function fmtDur(s){
   if(s<0||!isFinite(s)) return "--:--:--";
@@ -198,18 +198,18 @@ function renderControls(){
     return;
   }
   if(engine.running === null){            /* unknown yet */
-    p.className = "btn btn-ghost py-3"; p.textContent = "SYNCINGâ€¦"; p.disabled = true;
+    p.className = "btn btn-ghost py-3"; p.textContent = "SYNCING…"; p.disabled = true;
     r.className = "btn btn-ghost py-3"; r.disabled = true;
     return;
   }
-  if(engine.running){                     /* STATE B â€” running */
+  if(engine.running){                     /* STATE B — running */
     p.className = "btn btn-r py-3"; p.textContent = "â–  STOP"; p.disabled = false;
     p.onclick = ()=> execControl("stop");                       /* immediate, no confirm */
     r.className = "btn btn-y py-3"; r.disabled = false;
     r.onclick = ()=>{ if(confirm("Are you sure you want to restart the active trading engine?")) execControl("restart"); };
     $("ctlState").className = "pill pill-on"; $("ctlState").textContent = "STACK LIVE";
     $("runtimeBox").classList.remove("hidden"); $("offlineBox").classList.add("hidden");
-  } else {                                /* STATE A â€” stopped */
+  } else {                                /* STATE A — stopped */
     p.className = "btn btn-g py-3"; p.textContent = "â–¶ START"; p.disabled = false;
     p.onclick = ()=>{ if(confirm("Are you sure you want to initialize live trading operations?")) execControl("start"); };
     r.className = "btn btn-ghost py-3"; r.disabled = true; r.onclick = null;
@@ -219,20 +219,20 @@ function renderControls(){
 }
 async function execControl(action){
   engine.busy = true; renderControls();
-  $("ctlMsg").innerHTML = `<span class="text-amber glow-a">âŸ³ ${action} in progressâ€¦</span>`;
+  $("ctlMsg").innerHTML = `<span class="text-amber glow-a">⟳ ${action} in progress…</span>`;
   try{
     const r = await fetch("/api/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});
     const d = await r.json();
     $("ctlMsg").innerHTML = d.ok
-      ? `<span class="text-neon glow-g">âœ“ ${esc(d.result||"ok")}</span>`
-      : `<span class="text-red">âœ• ${esc(d.result||d.error||"failed")}${d.result==="NO_ENV"?" â€” write .env first":""}</span>`;
+      ? `<span class="text-neon glow-g">✓ ${esc(d.result||"ok")}</span>`
+      : `<span class="text-red">✕ ${esc(d.result||d.error||"failed")}${d.result==="NO_ENV"?" — write .env first":""}</span>`;
     if(d.ok) engine.lastToggle = Date.now();
-  }catch(e){ $("ctlMsg").innerHTML = `<span class="text-red">âœ• ${esc(String(e))}</span>`; }
+  }catch(e){ $("ctlMsg").innerHTML = `<span class="text-red">✕ ${esc(String(e))}</span>`; }
   engine.busy = false;
   setTimeout(pollHealth, 2500);
 }
 
-/* â•â•â•â• health â•â•â•â• */
+/* ════ health ════ */
 function barColor(p){ return p < 60 ? "#2dff8a" : p < 85 ? "#ffb224" : "#ff4d5e"; }
 function barRow(label, pct, detail){
   return `<div><div class="flex justify-between mb-0.5"><span class="lbl">${label}</span>
@@ -252,7 +252,7 @@ async function pollHealth(){
     const memP = d.mem.total ? 100*d.mem.used/d.mem.total : 0;
     const swpP = d.swap.total ? 100*d.swap.used/d.swap.total : 0;
     $("resBars").innerHTML =
-      barRow("CPU", d.cpu, d.cpu.toFixed(1)+"% Â· ld "+d.load1) +
+      barRow("CPU", d.cpu, d.cpu.toFixed(1)+"% · ld "+d.load1) +
       barRow("RAM", memP, `${d.mem.used}/${d.mem.total} MB`) +
       barRow("SWAP", swpP, `${d.swap.used}/${d.swap.total} MB`);
     $("uptime").textContent = (d.uptime||"").replace("up ","VM UP ").toUpperCase();
@@ -262,7 +262,7 @@ async function pollHealth(){
       topoCell("XVFB", t.XVFB>0) + topoCell("TMUX", d.tmux.session, "ACTIVE") +
       topoCell("BTC ENG", t.BTC>0, "LIVE") + topoCell("US500 ENG", t.US500>0, "LIVE");
     $("tmuxRow").innerHTML = d.tmux.session
-      ? d.tmux.windows.map(w=>`<span class="pill ${w.dead?"pill-off":"pill-on"}">${esc(w.name)}${w.dead?" âœ•":""}</span>`).join("")
+      ? d.tmux.windows.map(w=>`<span class="pill ${w.dead?"pill-off":"pill-on"}">${esc(w.name)}${w.dead?" ✕":""}</span>`).join("")
       : '<span class="pill pill-off">NO TMUX SESSION</span>';
     /* feed the state machine */
     engine.running = (t.BTC>0 || t.US500>0);
@@ -273,10 +273,10 @@ async function pollHealth(){
   }catch(e){ setConn(false); }
 }
 
-/* â•â•â•â• guardrails â•â•â•â• */
+/* ════ guardrails ════ */
 const LIMITS = {
-  btc:   {day:2.0, dd:7.5, capC:6, capI:4, name:"BTC Â· GLOBAL MACRO V4"},
-  us500: {day:3.2, dd:9.0, capC:50, capI:50, name:"US500 Â· AUCTION FLOW V5.1"},
+  btc:   {day:2.0, dd:7.5, capC:6, capI:4, name:"BTC · GLOBAL MACRO V4"},
+  us500: {day:3.2, dd:9.0, capC:50, capI:50, name:"US500 · AUCTION FLOW V5.1"},
 };
 function gauge(label, val, lim){
   const v = Math.abs(val); const p = lim ? Math.min(100*v/lim,100) : 0;
@@ -305,18 +305,18 @@ async function pollGuard(){
         <div class="flex justify-between items-center">
           <span class="text-[9.5px] tracking-wider text-txt">${L.name}</span>
           <span class="text-[9px] text-dim">${eq}</span></div>
-        ${gauge("DAILY DD â†’ lock", day, L.day)}
-        ${gauge("PEAK DD â†’ halt", dd, L.dd)}
+        ${gauge("DAILY DD → lock", day, L.day)}
+        ${gauge("PEAK DD → halt", dd, L.dd)}
         <div class="flex justify-between text-[9.5px]">
           <span class="text-dim">TRADES TODAY</span>
           <span class="tabular-nums" style="color:${trades>=cap?"#ff4d5e":"#2dff8a"}">${trades} / ${cap}</span></div></div>`;
     }
-    html += `<div class="text-[8.5px] text-dim leading-relaxed">Account walls: FTMO âˆ’5% daily / âˆ’10% total. Governors sit inside them.</div>`;
+    html += `<div class="text-[8.5px] text-dim leading-relaxed">Account walls: FTMO −5% daily / −10% total. Governors sit inside them.</div>`;
     $("guardBody").innerHTML = html;
   }catch(e){ /* keep last view */ }
 }
 
-/* â•â•â•â• log terminals â•â•â•â• */
+/* ════ log terminals ════ */
 const MAXLINES = 1200;
 function showTab(leg){
   for(const l of ["btc","us500"]){
@@ -345,7 +345,7 @@ function connectWS(leg){
   ws.onclose = ()=> setTimeout(()=>connectWS(leg), 4000);
 }
 
-/* â•â•â•â• reactive .env panel â•â•â•â• */
+/* ════ reactive .env panel ════ */
 const ENV_FIELDS = ["MT5_LOGIN","MT5_PASSWORD","MT5_SERVER","MT5_PATH","BTC_SYMBOL","US500_SYMBOL",
                     "SERVER_UTC_OFFSET_HOURS","MAGIC_BTC","MAGIC_US500","POLL_SECONDS"];
 const dirty = new Set();
@@ -377,25 +377,25 @@ async function loadEnv(force=false, attempt=1){
   }catch(e){
     if(attempt < 3){ setTimeout(()=>loadEnv(force, attempt+1), 1500*attempt); return; }
     $("envSrc").textContent = "OFFLINE"; $("envSrc").className = "pill pill-off";
-    $("envMsg").innerHTML = `<span class="text-red">âœ• ${esc(String(e))} â€” </span><a class="text-amber underline cursor-pointer" onclick="loadEnv(true)">retry</a>`;
+    $("envMsg").innerHTML = `<span class="text-red">✕ ${esc(String(e))} — </span><a class="text-amber underline cursor-pointer" onclick="loadEnv(true)">retry</a>`;
   }
 }
 async function saveEnv(){
   const values = {};
   for(const k of ENV_FIELDS) values[k] = $("f_"+k).value;
   values.CHALLENGE_MODE = $("chToggle").dataset.v==="true" ? "true" : "false";
-  $("envMsg").innerHTML = '<span class="text-amber">âŸ³ writing to VMâ€¦</span>';
+  $("envMsg").innerHTML = '<span class="text-amber">⟳ writing to VM…</span>';
   try{
     const r = await fetch("/api/env",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({values})});
     const d = await r.json();
     $("envMsg").innerHTML = d.ok
-      ? '<span class="text-neon glow-g">âœ“ saved (chmod 600) â€” restart stack to apply</span>'
-      : `<span class="text-red">âœ• ${esc(d.error||"save failed")}</span>`;
+      ? '<span class="text-neon glow-g">✓ saved (chmod 600) — restart stack to apply</span>'
+      : `<span class="text-red">✕ ${esc(d.error||"save failed")}</span>`;
     if(d.ok){ dirty.clear(); loadEnv(true); }
-  }catch(e){ $("envMsg").innerHTML = `<span class="text-red">âœ• ${esc(String(e))}</span>`; }
+  }catch(e){ $("envMsg").innerHTML = `<span class="text-red">✕ ${esc(String(e))}</span>`; }
 }
 
-/* â•â•â•â• boot: explicit async env fetch + telemetry loops + sockets â•â•â•â• */
+/* ════ boot: explicit async env fetch + telemetry loops + sockets ════ */
 document.addEventListener("DOMContentLoaded", ()=>{
   loadEnv(true);                       /* immediate reactive bind on page load */
   pollHealth(); setInterval(pollHealth, 5000);

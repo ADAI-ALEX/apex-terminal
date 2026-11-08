@@ -1,9 +1,9 @@
-﻿"""Apex Command Terminal â€” local management backend for the V4 Institutional VM.
+"""Apex Command Terminal — local management backend for the V4 Institutional VM.
 
 Architecture: ZERO remote footprint. The Oracle VM runs no web servers; every
 panel on the dashboard is fed by single-shot SSH commands (or a streamed
 ``tail -F`` for the live log terminals) using the existing deploy key. The
-backend binds to 127.0.0.1 only â€” credentials never leave the machine except
+backend binds to 127.0.0.1 only — credentials never leave the machine except
 over SSH to the VM itself.
 
 Run via ``start.bat`` (installs deps, boots uvicorn, opens the browser).
@@ -23,7 +23,7 @@ from pydantic import BaseModel
 log = logging.getLogger("apex_terminal")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-7s | %(message)s")
 
-ROOT = Path(__file__).resolve().parent.parent          # C:\workspace\Oracle\Algo-VM
+ROOT = Path(__file__).resolve().parent.parent          # deploy/ftmo-vm: holds the git-ignored SSH key and server_info.txt
 STATIC = Path(__file__).resolve().parent / "static"
 KEY_FILE = ROOT / "ssh-key-2026-06-10.key"
 REMOTE_DIR = "~/apex-v4"
@@ -111,7 +111,7 @@ async def favicon() -> FileResponse:
     return FileResponse(STATIC / "favicon.svg", media_type="image/svg+xml")
 
 
-# â”€â”€ system health & topology â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── system health & topology ──────────────────────────────────────────────
 HEALTH_CMD = r"""
 head -1 /proc/stat; sleep 1; head -1 /proc/stat
 echo '###MEM'; free -m
@@ -199,7 +199,7 @@ async def health() -> JSONResponse:
     })
 
 
-# â”€â”€ FTMO guardrails â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── FTMO guardrails ────────────────────────────────────────────────────────
 GUARD_CMD = (
     f"echo '###BTC_STATE'; cat {REMOTE_DIR}/{STATE_FILES['btc']} 2>/dev/null || echo {{}};"
     f"echo '###US_STATE'; cat {REMOTE_DIR}/{STATE_FILES['us500']} 2>/dev/null || echo {{}};"
@@ -248,7 +248,7 @@ async def guardrails() -> JSONResponse:
     })
 
 
-# â”€â”€ stack control â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── stack control ──────────────────────────────────────────────────────────
 STOP_CMD = (
     "tmux kill-session -t apex 2>/dev/null; "
     "WINEPREFIX=$HOME/.mt5 wineserver -k 2>/dev/null; "
@@ -290,11 +290,11 @@ async def control(req: ControlReq) -> JSONResponse:
     rc, out, err = await ssh_run(cmd, timeout=30)
     result = out.strip().splitlines()[-1] if out.strip() else ""
     ok = rc == 0 and result not in ("NO_ENV", "NO_SESSION")
-    log.info("control %s â†’ rc=%s result=%s", action, rc, result)
+    log.info("control %s → rc=%s result=%s", action, rc, result)
     return JSONResponse({"ok": ok, "result": result or err.strip(), "action": action})
 
 
-# â”€â”€ remote .env editor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── remote .env editor ─────────────────────────────────────────────────────
 @app.get("/api/env")
 async def env_get() -> JSONResponse:
     """Read the remote .env (falls back to the template for first-run)."""
@@ -331,18 +331,18 @@ async def env_save(req: EnvReq) -> JSONResponse:
     if not merged["MT5_LOGIN"] or not merged["MT5_PASSWORD"]:
         return JSONResponse({"ok": False, "error": "MT5_LOGIN and MT5_PASSWORD are required"},
                             status_code=400)
-    content = "# Apex V4 Institutional â€” written by Apex Command Terminal\n"
+    content = "# Apex V4 Institutional — written by Apex Command Terminal\n"
     content += "\n".join(f"{k}={merged[k]}" for k in ENV_KEYS) + "\n"
     rc, out, err = await ssh_run(
         f"cat > {REMOTE_DIR}/.env && chmod 600 {REMOTE_DIR}/.env && echo SAVED",
         timeout=15, stdin_data=content,
     )
     ok = rc == 0 and "SAVED" in out
-    log.info("env save â†’ %s", "SAVED" if ok else err.strip())
+    log.info("env save → %s", "SAVED" if ok else err.strip())
     return JSONResponse({"ok": ok, "error": "" if ok else err.strip()})
 
 
-# â”€â”€ live log streaming over WebSocket â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── live log streaming over WebSocket ──────────────────────────────────────
 @app.websocket("/ws/logs/{leg}")
 async def ws_logs(ws: WebSocket, leg: str) -> None:
     """Stream ``tail -F`` of a remote strategy log into the browser."""
@@ -363,7 +363,7 @@ async def ws_logs(ws: WebSocket, leg: str) -> None:
         while True:
             line = await proc.stdout.readline()
             if not line:
-                await ws.send_text("!! stream ended (ssh closed) â€” reconnectingâ€¦")
+                await ws.send_text("!! stream ended (ssh closed) — reconnecting…")
                 break
             await ws.send_text(line.decode(errors="replace").rstrip("\r\n"))
     except (WebSocketDisconnect, ConnectionResetError, RuntimeError):

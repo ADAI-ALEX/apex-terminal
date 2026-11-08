@@ -16,10 +16,10 @@ if errorlevel 1 (
   if errorlevel 1 ( echo [FATAL] pip install failed & pause & exit /b 1 )
 )
 
-if not exist "ssh-key-2026-06-10.key" (
-  echo [WARN] ssh-key-2026-06-10.key not found next to start.bat — SSH link will fail.
+if not exist "..\ssh-key-2026-06-10.key" (
+  echo [WARN] ssh-key-2026-06-10.key not found in deploy\ftmo-vm — SSH link will fail.
 )
 
 echo [boot] APEX COMMAND TERMINAL  --^>  http://localhost:8000   (Ctrl+C to shut down)
 start "" /min cmd /c "timeout /t 3 /nobreak >nul & start "" http://localhost:8000"
-python -m uvicorn app:app --app-dir apex_terminal --host 127.0.0.1 --port 8000 --log-level warning
+python -m uvicorn app:app --app-dir . --host 127.0.0.1 --port 8000 --log-level warning
