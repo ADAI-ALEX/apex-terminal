@@ -107,8 +107,11 @@ apex-terminal/
 │   ├── journal/db.py              # SQLite trade journal
 │   ├── core/                      # Shared state + heartbeat orchestrator
 │   └── server/state_server.py    # FastAPI :8080 — serves terminal + onboarding API
-├── tests/                        # pytest
-└── dashboard/                    # Next.js 14 App Router terminal (Terminal + Algorithms tabs)
+├── tests/                        # pytest suite
+├── scripts/                      # Historical data seeding and local environment setup
+├── dashboard/                    # Next.js 14 App Router terminal (Terminal + Algorithms tabs)
+├── deploy/ftmo-vm/               # MetaTrader 5 bridge, VM provisioning and monitoring console
+└── docs/                         # Vercel setup and prop-firm research notes
 ```
 
 ---
@@ -125,11 +128,11 @@ template. Subsequent runs show a menu (DEMO/LIVE engine, terminal, or both).
 ## Quick start (manual)
 
 ```bash
-python -m venv venv
+python -m venv venv            # Python 3.11 or newer
 venv\Scripts\activate          # Windows
 # source venv/bin/activate     # Linux/macOS
 pip install -r requirements.txt
-copy .env.example .env         # then fill it in (optional — onboarding wizard can do this too)
+copy .env.example .env         # cp on Linux/macOS; optional, the onboarding wizard can do this too
 python main.py                 # starts the engine + state server on :8080
 ```
 
@@ -171,5 +174,25 @@ backtest — no broker credentials required for that).
 
 All tunable constants live in [`apex/config.py`](apex/config.py): market EPICs, risk
 thresholds, strategy parameters, heartbeat intervals. No magic numbers in logic
-files. See [`docs/PROP_FIRM_PLAN.md`](docs/PROP_FIRM_PLAN.md) for the prop-firm
+files. See [`docs/research/PROP_FIRM_PLAN.md`](docs/research/PROP_FIRM_PLAN.md) for the prop-firm
 research and roadmap behind the risk model.
+
+---
+
+## Development
+
+```bash
+pip install -r requirements.txt
+pytest                          # Python test suite
+ruff check .                    # lint
+cd dashboard && npx tsc --noEmit  # typecheck the terminal
+```
+
+Further reading: [running the control plane on Vercel](docs/deploy-vercel.md) and the
+[FTMO / MetaTrader 5 deployment](deploy/ftmo-vm/README.md).
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026 Alexander de Gentile-Murnieks
