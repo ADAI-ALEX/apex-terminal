@@ -64,7 +64,7 @@ E = W·R − (1 − W)
 DailyReturn ≈ N · r · E
 ```
 
-Strategy book (from `MASTER_PLAN.md` §01, prop-tuned):
+Strategy book (prop-tuned):
 
 | Strategy | W | R | Expectancy `E` (×r) |
 |---|---|---|---|

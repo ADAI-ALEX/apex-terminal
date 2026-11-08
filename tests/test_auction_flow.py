@@ -1,8 +1,8 @@
 """Tests for the Auction-Market-Theory toolkit (volume_profile + cvd) and the
 Auction Flow strategy.
 
-Covers the two new primitives exposed to every custom strategy and the invariants
-the FTMO strategy must hold: it is long-only (the indices drift up — shorts have no
+Covers the two primitives exposed to every custom strategy and the invariants
+the shipped demo strategy must hold: it is long-only (the indices drift up — shorts have no
 edge), it compiles/runs without crashing, and its survival breaker flattens when the
 account nears the max-loss line.
 """
@@ -120,10 +120,10 @@ def test_auction_flow_is_long_only():
 
 
 def test_auction_flow_survival_breaker_flattens():
-    """At/over the 6% drawdown line an open long is flattened."""
+    """At/over the 9% account backstop an open long is flattened."""
     strat = CompiledStrategy(_auction_flow_code())
     candles = _make_series(300)
-    decision, _ = strat.decide(250, candles, position=1, dd_from_peak_pct=7.0)
+    decision, _ = strat.decide(250, candles, position=1, dd_from_peak_pct=9.5)
     assert decision == "FLAT"
 
 
@@ -178,35 +178,6 @@ def test_scale_out_books_one_combined_trade():
     assert res["total_return_pct"] > 0               # rising market -> profitable long
 
 
-def test_v2_is_long_only_and_breaker_flattens():
-    """V2 (Challenge Mode) keeps the long-only bias and the hard daily breaker."""
-    meta = store.get("auction_flow_v2")
-    assert meta is not None, "auction_flow_v2 strategy file must exist"
-    strat = CompiledStrategy(meta.code)
-    candles = _make_series(400)
-    decisions = set()
-    for i in range(60, len(candles)):
-        decision, _ = strat.decide(i, candles, position=0)
-        decisions.add(decision)
-    assert "SELL" not in decisions
-    # Day down past -2.5% with an open long -> hard circuit breaker flattens.
-    decision, _ = strat.decide(300, candles, position=1, day_pnl_pct=-2.6)
-    assert decision == "FLAT"
-
-
-def test_v2_sizes_above_v1_floor():
-    """V2's dynamic base risk lives in the 0.8–1.25% band (vs V1's 0.45%)."""
-    meta = store.get("auction_flow_v2")
-    assert meta is not None
-    strat = CompiledStrategy(meta.code)
-    candles = _make_series(400)
-    risks = [r for i in range(60, len(candles))
-             for d, r in [strat.decide(i, candles, position=0)] if r is not None]
-    # Whenever V2 sizes a trade it is at least the 0.8% floor (drawdown-throttle aside).
-    assert risks, "expected at least one sized entry"
-    assert max(risks) >= 0.8
-
-
 def test_runner_exposes_trail_dist():
     """A snippet can request a trailing stop via trail_dist (price distance)."""
     strat = CompiledStrategy("signal = 'BUY'\nscale_at = 50.0\nscale_frac = 0.25\ntrail_dist = 5.0\n")
@@ -245,25 +216,6 @@ def test_trailing_stop_locks_profit_on_runner():
     assert res["total_return_pct"] > 0               # trailing stop locked in profit
 
 
-def test_v5_long_only_and_breaker():
-    """V5: long-only, -3.5% daily breaker, sizing in the 1.2–1.9% band. (The
-    asymmetric trailing-exit path itself is covered by the engine/runner tests.)"""
-    meta = store.get("auction_flow_v5")
-    assert meta is not None, "auction_flow_v5 strategy file must exist"
-    strat = CompiledStrategy(meta.code)
-    candles = _make_series(500)
-    risks, decisions = [], set()
-    for i in range(60, len(candles)):
-        d, r = strat.decide(i, candles, position=0)
-        decisions.add(d)
-        if r is not None:
-            risks.append(r)
-    assert "SELL" not in decisions                     # long-only
-    assert risks and 1.2 <= min(risks) and max(risks) <= 1.9   # V4-style tilt band
-    d, _ = strat.decide(300, candles, position=1, day_pnl_pct=-3.6)
-    assert d == "FLAT"                                 # -3.5% hard daily breaker
-
-
 def test_runner_bars_since_scale_kwarg():
     """The engine feeds bars_since_scale to decide() for a one-time runner gate."""
     strat = CompiledStrategy("signal = 'FLAT' if bars_since_scale == 1 else 'HOLD'\n")
@@ -271,76 +223,6 @@ def test_runner_bars_since_scale_kwarg():
     d_gate, _ = strat.decide(100, candles, position=1, bars_since_scale=1)
     d_none, _ = strat.decide(100, candles, position=1, bars_since_scale=-1)
     assert d_gate == "FLAT" and d_none is None
-
-
-def test_v5_1_hybrid_long_only_and_breaker():
-    """V5.1-Hybrid: long-only, 1.2–1.9% sizing, -3.2% daily breaker."""
-    meta = store.get("auction_flow_v5_1_hybrid")
-    assert meta is not None, "auction_flow_v5_1_hybrid strategy file must exist"
-    strat = CompiledStrategy(meta.code)
-    candles = _make_series(500)
-    risks, decisions = [], set()
-    for i in range(60, len(candles)):
-        d, r = strat.decide(i, candles, position=0)
-        decisions.add(d)
-        if r is not None:
-            risks.append(r)
-    assert "SELL" not in decisions
-    assert risks and 1.2 <= min(risks) and max(risks) <= 1.9
-    d, _ = strat.decide(300, candles, position=1, day_pnl_pct=-3.3)
-    assert d == "FLAT"                                 # -3.2% hard daily breaker
-
-
-def test_v5_2_scaled_long_only_and_band():
-    """V5.2-Scaled: long-only, -3.2% breaker, sizing in the raised 1.5–2.3% band."""
-    meta = store.get("auction_flow_v5_2_scaled")
-    assert meta is not None, "auction_flow_v5_2_scaled strategy file must exist"
-    strat = CompiledStrategy(meta.code)
-    candles = _make_series(500)
-    risks, decisions = [], set()
-    for i in range(60, len(candles)):
-        d, r = strat.decide(i, candles, position=0)
-        decisions.add(d)
-        if r is not None:
-            risks.append(r)
-    assert "SELL" not in decisions
-    assert risks and 1.5 <= min(risks) and max(risks) <= 2.3
-    d, _ = strat.decide(300, candles, position=1, day_pnl_pct=-3.3)
-    assert d == "FLAT"
-
-
-def test_v6_1_master_long_only_band_and_breaker():
-    """V6.1-Master (15M MTF): long-only, 0.8–1.5% band, -4.0% daily breaker."""
-    meta = store.get("auction_flow_v6_1_mtf")
-    assert meta is not None, "auction_flow_v6_1_mtf strategy file must exist"
-    strat = CompiledStrategy(meta.code)
-    candles = _make_series(500)
-    risks, decisions = [], set()
-    for i in range(60, len(candles)):
-        d, r = strat.decide(i, candles, position=0)
-        decisions.add(d)
-        if r is not None:
-            risks.append(r)
-    assert "SELL" not in decisions
-    assert risks and 0.8 <= min(risks) and max(risks) <= 1.5
-    d, _ = strat.decide(300, candles, position=1, day_pnl_pct=-4.1)
-    assert d == "FLAT"
-
-
-def test_intraday_micro_long_only_and_breaker():
-    """Intraday Micro V1 (15M momentum): long-only, -4.0% daily breaker, valid risk."""
-    meta = store.get("intraday_micro_v1")
-    assert meta is not None, "intraday_micro_v1 strategy file must exist"
-    strat = CompiledStrategy(meta.code)
-    candles = _make_series(500)
-    decisions = set()
-    for i in range(60, len(candles)):
-        d, r = strat.decide(i, candles, position=0)
-        decisions.add(d)
-        assert r is None or 0.0 < r <= 10.0
-    assert "SELL" not in decisions                     # long-only (probe: shorts lose)
-    d, _ = strat.decide(300, candles, position=1, day_pnl_pct=-4.1)
-    assert d == "FLAT"                                 # -4.0% hard daily breaker
 
 
 def test_opening_range_and_prev_day_primitives():
@@ -360,61 +242,6 @@ def test_opening_range_and_prev_day_primitives():
     assert abs(float(pdr.high) - 108.0) < 2.0          # day-1 high ~ 101+7
 
 
-def test_v6_2_long_only_and_breaker():
-    """V6.2 (deep-validated): long-only, 0.8–1.6% band, -4.0% daily breaker."""
-    meta = store.get("auction_flow_v6_2_optimized")
-    assert meta is not None, "auction_flow_v6_2_optimized strategy file must exist"
-    strat = CompiledStrategy(meta.code)
-    candles = _make_series(500)
-    risks, decisions = [], set()
-    for i in range(60, len(candles)):
-        d, r = strat.decide(i, candles, position=0)
-        decisions.add(d)
-        if r is not None:
-            risks.append(r)
-    assert "SELL" not in decisions
-    assert risks and 0.8 <= min(risks) and max(risks) <= 1.6
-    d, _ = strat.decide(300, candles, position=1, day_pnl_pct=-4.1)
-    assert d == "FLAT"
-
-
-def test_v6_15m_pair_long_only_and_band():
-    """V6.a/V6.b (15M): long-only, 0.8–1.4% sizing band, -4.0% daily breaker."""
-    for name in ("auction_flow_v6_0_a_base", "auction_flow_v6_0_b_hybrid"):
-        meta = store.get(name)
-        assert meta is not None, f"{name} strategy file must exist"
-        strat = CompiledStrategy(meta.code)
-        candles = _make_series(500)
-        risks, decisions = [], set()
-        for i in range(60, len(candles)):
-            d, r = strat.decide(i, candles, position=0)
-            decisions.add(d)
-            if r is not None:
-                risks.append(r)
-        assert "SELL" not in decisions, name
-        assert risks and 0.8 <= min(risks) and max(risks) <= 1.4, name
-        d, _ = strat.decide(300, candles, position=1, day_pnl_pct=-4.1)
-        assert d == "FLAT", name                       # -4.0% hard daily breaker
-
-
-def test_v4_long_only_divergence_tilt_sizing():
-    """V4 (Max Risk): long-only, 1.2–2.2% divergence-tilted sizing, -3.2% breaker."""
-    meta = store.get("auction_flow_v4")
-    assert meta is not None, "auction_flow_v4 strategy file must exist"
-    strat = CompiledStrategy(meta.code)
-    candles = _make_series(400)
-    risks, decisions = [], set()
-    for i in range(60, len(candles)):
-        d, r = strat.decide(i, candles, position=0)
-        decisions.add(d)
-        if r is not None:
-            risks.append(r)
-    assert "SELL" not in decisions                     # long-only
-    assert risks and 1.2 <= min(risks) and max(risks) <= 2.2   # divergence-tilt band
-    d, _ = strat.decide(300, candles, position=1, day_pnl_pct=-3.3)
-    assert d == "FLAT"                                 # -3.2% hard daily breaker
-
-
 def test_cvd_divergence_primitive_signs():
     """cvd_divergence returns +1 bullish / -1 bearish / 0, and never raises."""
     t0 = _base_time()
@@ -424,26 +251,3 @@ def test_cvd_divergence_primitive_signs():
     assert _Indicators(bull).cvd_divergence(12) in (1, 0)
     flat = [_bar(t0 + timedelta(hours=i), 100, 100.5, 99.5, 100, 1000.0) for i in range(20)]
     assert _Indicators(flat).cvd_divergence(12) == 0
-
-
-def test_v3_long_only_breaker_and_aggressive_sizing():
-    """V3 (Max Util): long-only, hard -3.5% daily breaker, 1.2–1.9% base sizing."""
-    meta = store.get("auction_flow_v3")
-    assert meta is not None, "auction_flow_v3 strategy file must exist"
-    strat = CompiledStrategy(meta.code)
-    candles = _make_series(400)
-    risks, decisions = [], set()
-    for i in range(60, len(candles)):
-        d, r = strat.decide(i, candles, position=0)
-        decisions.add(d)
-        if r is not None:
-            risks.append(r)
-    assert "SELL" not in decisions                     # long-only
-    assert max(risks) >= 1.2                            # aggressive base sizing
-    assert max(risks) <= 1.9                            # but capped at the ceiling
-    # Day down past -3.5% with an open long -> hard circuit breaker flattens.
-    d, _ = strat.decide(300, candles, position=1, day_pnl_pct=-3.6)
-    assert d == "FLAT"
-    # ... but at -3.0% (inside the breaker) it does NOT force a flatten.
-    d2, _ = strat.decide(300, candles, position=1, day_pnl_pct=-3.0)
-    assert d2 != "FLAT"

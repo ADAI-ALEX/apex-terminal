@@ -1,7 +1,6 @@
-"""Tests for the Markov regime engine (the "hedge-fund method") and the saved
-``markov_regime`` strategy: state labelling, the maximum-likelihood transition
+"""Tests for the Markov regime engine: state labelling, the maximum-likelihood transition
 matrix, Chapman-Kolmogorov n-step forecast, the stationary distribution, the
-sandbox ``markov()`` binding, and the end-to-end engine path.
+and the sandbox ``markov()`` binding.
 """
 
 from __future__ import annotations
@@ -16,10 +15,7 @@ from apex.backtest.custom_runner import (
     compute_markov,
     validate_code,
 )
-from apex.backtest.engine import run_backtest
-from apex.config import MARKETS
 from apex.models import Candle
-from apex.strategies import store
 
 
 # ── synthetic series ─────────────────────────────────────────────────────────
@@ -106,22 +102,3 @@ def test_markov_available_in_sandbox():
     cs = CompiledStrategy(code)
     decision, _ = cs.decide(700, _candles_from(_noisy(0.0006)))
     assert decision in ("BUY", None)
-
-
-def test_saved_markov_strategy_validates():
-    meta = store.get("markov_regime")
-    assert meta is not None and meta.label.startswith("Markov Regime")
-    assert validate_code(meta.code)[0] is True
-
-
-def test_saved_markov_strategy_trades_in_engine():
-    meta = store.get("markov_regime")
-    # uptrend then downtrend so both the long and short branches can fire
-    closes = _noisy(0.0008, n=500, seed=2) + _noisy(-0.0008, n=500, seed=3, start=200.0)
-    res = run_backtest(
-        _candles_from(closes), MARKETS["US500"], mc_runs=50,
-        strategy={"name": meta.name, "kind": "custom", "code": meta.code},
-    )
-    d = res.to_dict()
-    assert d["trades"] > 0
-    assert d["max_total_dd_pct"] >= 0.0

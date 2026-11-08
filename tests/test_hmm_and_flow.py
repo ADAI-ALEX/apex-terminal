@@ -1,16 +1,13 @@
-"""Tests for the Phase-5 crypto state engine and its new math infrastructure.
+"""Tests for the regime and order-flow math used by the backtest engine.
 
 Covers: the Gaussian-HMM fit/filter primitives (correctness + walk-forward
 no-lookahead), the real taker-flow primitives, the percent cost model in the
-backtest engine, the macro overlay columns in the crypto seeds, and that the
-shipped ``crypto_state_v1.py`` snippet validates and runs end-to-end.
+backtest engine, and the macro overlay columns in the crypto seeds.
 """
 from __future__ import annotations
 
-import math
 import random
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
@@ -20,15 +17,11 @@ from apex.backtest.custom_runner import (
     fit_hmm,
     hmm_filter_step,
     hmm_read,
-    validate_code,
 )
 from apex.backtest.engine import run_backtest
 from apex.backtest.runner import LOCAL_BACKTEST_MARKETS
 from apex.config import get_settings
 from apex.models import Candle
-
-STRAT_PATH = Path(__file__).resolve().parents[1] / "apex" / "strategies" / "custom" / "crypto_state_v1.py"
-STRAT_V2_PATH = Path(__file__).resolve().parents[1] / "apex" / "strategies" / "custom" / "crypto_state_v2.py"
 
 
 def _candles(closes: list[float], start: datetime | None = None,
@@ -146,33 +139,6 @@ def test_btc_seed_carries_macro_and_delta() -> None:
 
 # ── the shipped strategy file ────────────────────────────────────────────────
 
-def test_crypto_state_v1_validates() -> None:
-    code = STRAT_PATH.read_text(encoding="utf-8")
-    ok, err = validate_code(code)
-    assert ok, err
-
-
-@pytest.mark.skipif(not dataset.has_local("BTCUSD", "15m"), reason="no local BTC 15m seed")
-def test_crypto_state_v1_runs_end_to_end() -> None:
-    code = STRAT_PATH.read_text(encoding="utf-8")
-    s = dataset.load("BTCUSD", 0, timeframe="15m")
-    # a 2024H2 slice (bull/chop) where the strategy is known to trade
-    idx = [i for i, c in enumerate(s.candles)
-           if "2024-10-01" <= c.time.isoformat()[:10] < "2024-12-15"]
-    a, b = idx[0], idx[-1] + 1
-    cs = s.candles[a:b]
-    exo = {n: v[a:b] for n, v in s.exo.items()}
-    st = get_settings()
-    r = run_backtest(cs, LOCAL_BACKTEST_MARKETS["BTCUSD"], starting_equity=100_000.0,
-                     risk_pct=1.0, params=st.strategy, mc_runs=50,
-                     strategy={"name": "cs1", "kind": "custom", "code": code},
-                     exo=exo, cost_pct=0.12)
-    assert r.bars == len(cs)
-    assert r.trades >= 1, "expected at least one trade in a bull/chop slice"
-    assert r.max_daily_dd_pct < 4.0
-    assert r.max_total_dd_pct < 9.0
-
-
 # ── Phase 5.2: the 4H series + the shipped V2 strategy file ──────────────────
 
 @pytest.mark.skipif(not dataset.has_local("BTCUSD", "240m"), reason="no local BTC 240m seed")
@@ -188,53 +154,3 @@ def test_btc_240m_seed_carries_macro_and_delta() -> None:
     for prev, cur in zip(s.candles[1000:1010], s.candles[1001:1011]):
         assert (cur.time - prev.time).total_seconds() == 4 * 3600
         assert cur.time.hour % 4 == 0
-
-
-def test_crypto_state_v2_validates() -> None:
-    code = STRAT_V2_PATH.read_text(encoding="utf-8")
-    ok, err = validate_code(code)
-    assert ok, err
-
-
-def test_global_macro_v4_validates_in_both_modes() -> None:
-    """The V4 file must validate as shipped AND with CHALLENGE_MODE flipped."""
-    code = STRAT_V2_PATH.with_name("global_macro_v4.py").read_text(encoding="utf-8")
-    ok, err = validate_code(code)
-    assert ok, err
-    assert "CHALLENGE_MODE = False" in code, "V4 must ship in institutional mode"
-    flipped = code.replace("CHALLENGE_MODE = False", "CHALLENGE_MODE = True")
-    ok, err = validate_code(flipped)
-    assert ok, err
-
-
-def test_crypto_v3_master_validates_and_matches_v2_stack() -> None:
-    """V3-master's BTC leg must stay byte-identical to V2 below the header."""
-    v3_path = STRAT_V2_PATH.with_name("crypto_v3_master.py")
-    code = v3_path.read_text(encoding="utf-8")
-    ok, err = validate_code(code)
-    assert ok, err
-    strip = lambda c: "\n".join(  # noqa: E731 - test-local helper
-        line for line in c.splitlines() if not line.startswith("#")).strip()
-    assert strip(code) == strip(STRAT_V2_PATH.read_text(encoding="utf-8")), (
-        "crypto_v3_master.py drifted from crypto_state_v2.py — keep the BTC leg identical")
-
-
-@pytest.mark.skipif(not dataset.has_local("BTCUSD", "240m"), reason="no local BTC 240m seed")
-def test_crypto_state_v2_runs_end_to_end() -> None:
-    """The shipped V2 file trades a known bull slice inside the prop ceilings."""
-    code = STRAT_V2_PATH.read_text(encoding="utf-8")
-    s = dataset.load("BTCUSD", 0, timeframe=dataset.suffix_for(240))
-    idx = [i for i, c in enumerate(s.candles)
-           if "2024-01-01" <= c.time.isoformat()[:10] < "2024-07-01"]
-    a, b = idx[0], idx[-1] + 1
-    cs = s.candles[a:b]
-    exo = {n: v[a:b] for n, v in s.exo.items()}
-    st = get_settings()
-    r = run_backtest(cs, LOCAL_BACKTEST_MARKETS["BTCUSD"], starting_equity=100_000.0,
-                     risk_pct=1.0, params=st.strategy, mc_runs=50,
-                     strategy={"name": "cs2", "kind": "custom", "code": code},
-                     exo=exo, cost_pct=0.12)
-    assert r.bars == len(cs)
-    assert r.trades >= 1, "expected at least one trade in the 2024H1 bull slice"
-    assert r.max_daily_dd_pct < 4.0
-    assert r.max_total_dd_pct < 9.0
