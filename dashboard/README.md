@@ -1,7 +1,7 @@
 # Apex Dashboard
 
 Next.js 14 (App Router) command centre for the Apex Algo. Auth via NextAuth v5
-(single-user JWT), realtime via SSE polling the VPS state server.
+(single-user JWT), with live data from polling the VPS state server.
 
 ## Local dev
 
