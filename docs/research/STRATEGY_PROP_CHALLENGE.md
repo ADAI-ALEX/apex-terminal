@@ -1,7 +1,7 @@
 # Apex Algo — Prop-Challenge Strategy (FTMO 2-Step, $100k)
 
 > Research source-of-truth for passing and keeping a **2-step $100,000** prop account.
-> Pairs with `docs/PROP_FIRM_PLAN.md` (instruments + R:R math) and the live
+> Pairs with [`PROP_FIRM_PLAN.md`](PROP_FIRM_PLAN.md) (instruments + R:R math) and the live
 > `RISK_PROFILES` in `apex/config.py`. The thesis: **one regime-adaptive meta-strategy
 > that switches tactics by market state**, sized so the drawdown rules can't be hit.
 

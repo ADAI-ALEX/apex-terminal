@@ -1,8 +1,7 @@
 # Apex Algo — Prop-Firm Research & 4-Phase Roadmap
 
 > Quant-research source-of-truth for taking the Claude-brain engine onto a retail
-> prop-firm account (FTMO / The5ers style) at $100k+. Pairs with `MASTER_PLAN.md`
-> (system design) and `CLAUDE.md` (project rules).
+> prop-firm account (FTMO / The5ers style) at $100k+.
 >
 > **Objective:** average **+0.5%/day** (~10%/month) with **hard** guardrails —
 > max **daily** equity drawdown **< 3%**, max **total** drawdown **< 8%**, measured

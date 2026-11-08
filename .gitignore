@@ -58,7 +58,6 @@ apex/backtest/data/*.bak
 apex/backtest/data/*_1m.csv
 
 # FTMO VM deploy artifacts
-.claude/scheduled_tasks.lock
 *_state.json
 screen.png
 server_info.txt
@@ -70,5 +69,6 @@ server_info.txt
 apex/strategies/custom/*.py
 !apex/strategies/custom/.gitkeep
 
-# Local-only project instructions for Claude Code (kept off the public repo)
-/CLAUDE.md
+# Local assistant / editor configuration
+.claude/
+CLAUDE.md
