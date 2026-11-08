@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from apex.backtest.custom_runner import (
     CompiledStrategy,
@@ -29,7 +29,7 @@ def _noisy(drift: float, n: int = 800, seed: int = 1, start: float = 100.0,
 
 
 def _candles_from(closes: list[float]) -> list[Candle]:
-    base = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    base = datetime(2020, 1, 1, tzinfo=UTC)
     out: list[Candle] = []
     for i, c in enumerate(closes):
         o = closes[i - 1] if i else c

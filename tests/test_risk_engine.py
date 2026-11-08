@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC
+
 import pytest
 
 from apex.config import Direction, get_settings
@@ -99,10 +101,10 @@ def test_kill_switch_blocks(monkeypatch, engine):
 
 
 def test_overnight_close_logic(engine):
-    from datetime import datetime, timezone
+    from datetime import datetime
     pos = _position("FTSE100")
     pos.current_price = pos.entry_price + 5  # only +5pt, below 20pt keep threshold
-    late = datetime(2026, 1, 1, 23, 0, tzinfo=timezone.utc)
+    late = datetime(2026, 1, 1, 23, 0, tzinfo=UTC)
     assert engine.should_close_overnight(pos, late) is True
     pos.current_price = pos.entry_price + 50  # healthy profit → keep
     assert engine.should_close_overnight(pos, late) is False

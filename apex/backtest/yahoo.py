@@ -6,7 +6,7 @@ instrument. Mirrors the dashboard's /api/prices symbol map.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import requests
 from loguru import logger
@@ -53,7 +53,7 @@ def fetch(key: str, minutes: int, bars: int) -> list[Candle]:
             if None in (o, h, lo, c):
                 continue
             out.append(Candle(
-                time=datetime.fromtimestamp(t, tz=timezone.utc),
+                time=datetime.fromtimestamp(t, tz=UTC),
                 open=o, high=h, low=lo, close=c, volume=vol[i] or 0,
             ))
         logger.info("Yahoo backtest data: {} {} bars ({} {})", len(out), key, interval, rng)

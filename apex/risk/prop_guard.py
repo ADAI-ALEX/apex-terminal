@@ -22,7 +22,7 @@ The class is deliberately broker-free: feed it equity + time, act on the decisio
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 
 from loguru import logger
@@ -66,7 +66,7 @@ class PropGuard:
 
     def evaluate(self, equity: float, now: datetime | None = None) -> PropDecision:
         """Update state from a new equity sample and return the guard decision."""
-        now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        now = (now or datetime.now(UTC)).astimezone(UTC)
         equity = max(float(equity), 0.0)
 
         self._roll_day(now, equity)
@@ -143,7 +143,7 @@ class PropGuard:
             from datetime import timedelta
 
             boundary = boundary - timedelta(days=1)
-        return boundary.astimezone(timezone.utc)
+        return boundary.astimezone(UTC)
 
     def _tz(self):  # type: ignore[no-untyped-def]
         if ZoneInfo is not None:
@@ -151,7 +151,7 @@ class PropGuard:
                 return ZoneInfo(self.p.daily_reset_tz)
             except Exception:  # pragma: no cover
                 pass
-        return timezone.utc
+        return UTC
 
     @staticmethod
     def _pct_drop(reference: float | None, equity: float) -> float:

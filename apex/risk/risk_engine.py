@@ -14,11 +14,9 @@ no orders, which is what makes it exhaustively unit-testable.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, time, timezone
+from datetime import UTC, datetime, time
 
-from loguru import logger
-
-from apex.config import Direction, RiskParams, get_settings
+from apex.config import RiskParams, get_settings
 from apex.models import AccountSnapshot, Position, RiskDecision, Signal
 
 
@@ -128,7 +126,7 @@ class RiskEngine:
     # ──────────────────────────────────────────────────────────────────
     def should_close_overnight(self, position: Position, now: datetime | None = None) -> bool:
         """Close low-conviction positions after the overnight cutoff."""
-        now = now or datetime.now(timezone.utc)
+        now = now or datetime.now(UTC)
         cutoff = _parse_hhmm(self.p.overnight_cutoff_uk)
         if now.timetz().replace(tzinfo=None) < cutoff:
             return False

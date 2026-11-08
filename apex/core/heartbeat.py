@@ -13,7 +13,7 @@ crashes another. All blocking broker calls run in a threadpool via
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 
@@ -21,13 +21,13 @@ from apex.agents.eod_analyst import EodAnalyst
 from apex.agents.portfolio_reviewer import PortfolioReviewer
 from apex.agents.signal_evaluator import SignalEvaluator
 from apex.cloud import kv
-from apex.config import Direction, Market, Settings, get_settings, reload_settings
+from apex.config import Market, Settings, get_settings, reload_settings
 from apex.core.state import STATE
 from apex.ig.client import Broker, create_broker
-from apex.onboarding.store import STORE
 from apex.indicators.engine import build_snapshot
 from apex.journal.db import TradeJournal
 from apex.models import Candle, IndicatorSnapshot, Position, Signal
+from apex.onboarding.store import STORE
 from apex.risk.prop_guard import PropAction, PropGuard
 from apex.risk.risk_engine import RiskContext, RiskEngine
 from apex.strategies import ALL_STRATEGIES
@@ -37,7 +37,7 @@ try:  # tz-aware close checks; degrade gracefully if tzdata missing
     from zoneinfo import ZoneInfo
     _UK = ZoneInfo("Europe/London")
 except Exception:  # pragma: no cover
-    _UK = timezone.utc  # type: ignore[assignment]
+    _UK = UTC  # type: ignore[assignment]
 
 
 class Heartbeat:
@@ -262,7 +262,7 @@ class Heartbeat:
                 logger.info("Trailed stop on {} to {}", pos.market_key, rec.new_stop)
 
         # Overnight low-conviction flattening.
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for pos in list(self.positions.values()):
             if self.risk.should_close_overnight(pos, now):
                 await self._close(pos, "EOD")

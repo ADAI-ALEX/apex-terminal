@@ -15,7 +15,7 @@ Run:  venv/Scripts/python.exe scripts/seed_4h_resample.py
 from __future__ import annotations
 
 import csv
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,21 +38,21 @@ def resample(key: str) -> None:
     bucket = -1
     with src.open(newline="", encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
-            ts = int(datetime.fromisoformat(row["date"]).replace(tzinfo=timezone.utc).timestamp())
+            ts = int(datetime.fromisoformat(row["date"]).replace(tzinfo=UTC).timestamp())
             b = ts // BUCKET_S * BUCKET_S
-            o, h, l, c = (float(row["open"]), float(row["high"]),
+            o, h, low, c = (float(row["open"]), float(row["high"]),
                           float(row["low"]), float(row["close"]))
             if cur is None or b != bucket:
                 if cur is not None:
                     out_rows.append(cur)
                 bucket = b
-                cur = {"date": datetime.fromtimestamp(b, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
-                       "open": o, "high": h, "low": l, "close": c}
-                for col, agg in EXO_AGG.items():
+                cur = {"date": datetime.fromtimestamp(b, tz=UTC).strftime("%Y-%m-%dT%H:%M:%S"),
+                       "open": o, "high": h, "low": low, "close": c}
+                for col in EXO_AGG:
                     cur[col] = float(row.get(col) or 0.0)
             else:
                 cur["high"] = max(cur["high"], h)
-                cur["low"] = min(cur["low"], l)
+                cur["low"] = min(cur["low"], low)
                 cur["close"] = c
                 for col, agg in EXO_AGG.items():
                     v = float(row.get(col) or 0.0)

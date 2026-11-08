@@ -1,7 +1,10 @@
 [project]
 name = "apex-algo"
 version = "1.0.0"
-description = "Production-grade automated spread betting system for IG Markets UK."
+description = "Browser-based trading terminal with a strategy builder, offline backtester and risk-gated execution engine."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Alexander de Gentile-Murnieks" }]
 requires-python = ">=3.11"
 
 [tool.pytest.ini_options]
@@ -12,10 +15,17 @@ addopts = "-q"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# The MT5 bridge runs on Windows Python 3.10 under Wine.
+extend-exclude = ["deploy"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-ignore = ["E501"]
+# UP042: moving to StrEnum changes how these enums format.
+ignore = ["E501", "UP042"]
+
+[tool.ruff.lint.per-file-ignores]
+# Strategies are written in the sandbox DSL; the engine injects these names.
+"apex/strategies/default/*.py" = ["F821"]
 
 [tool.mypy]
 python_version = "3.11"

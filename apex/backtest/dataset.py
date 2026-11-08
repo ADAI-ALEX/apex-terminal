@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from loguru import logger
@@ -94,7 +94,7 @@ def load(key: str, bars: int = 0, timeframe: str = "D1") -> HistoricalSeries:
         with path.open(newline="", encoding="utf-8") as fh:
             for row in csv.DictReader(fh):
                 try:
-                    dt = datetime.fromisoformat(row["date"]).replace(tzinfo=timezone.utc)
+                    dt = datetime.fromisoformat(row["date"]).replace(tzinfo=UTC)
                     candles.append(Candle(
                         time=dt,
                         open=float(row["open"]), high=float(row["high"]),

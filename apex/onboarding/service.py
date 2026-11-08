@@ -9,7 +9,7 @@ in a worker thread.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from loguru import logger
 
@@ -78,7 +78,7 @@ def update(partial: dict, store: ConfigStore | None = None) -> OnboardingStatus:
                 continue  # never clobber a stored secret with a blank
             current[key] = value
         data[section] = current
-    data["configured_at"] = datetime.now(timezone.utc).isoformat()
+    data["configured_at"] = datetime.now(UTC).isoformat()
     store.save(data)
     try:
         from apex.config import reload_settings
@@ -112,7 +112,7 @@ def save(payload: OnboardingPayload, store: ConfigStore | None = None) -> Valida
         "ig": payload.ig.model_dump(),
         "anthropic": payload.anthropic.model_dump(),
         "risk": payload.risk.model_dump(),
-        "configured_at": datetime.now(timezone.utc).isoformat(),
+        "configured_at": datetime.now(UTC).isoformat(),
     }
     store.save(record)
 

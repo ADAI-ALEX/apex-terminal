@@ -6,7 +6,7 @@ clean serialization for the state server the dashboard consumes.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
@@ -14,7 +14,7 @@ from apex.config import Direction, Regime
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Candle(BaseModel):

@@ -517,7 +517,7 @@ def compute_markov(
 
     labels = [label(r) for r in rets]
     counts = [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 1.0]]  # Laplace smoothing
-    for a, b in zip(labels[:-1], labels[1:]):
+    for a, b in zip(labels[:-1], labels[1:], strict=False):
         counts[a][b] += 1.0
     p = [[v / sum(row) for v in row] for row in counts]  # row-stochastic matrix
 

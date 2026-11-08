@@ -9,12 +9,11 @@ consecutive losses) the heartbeat feeds into the RiskEngine.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from loguru import logger
 
-from apex.config import Direction
 from apex.models import TradeRecord
 
 _SCHEMA = """
@@ -77,11 +76,11 @@ class TradeJournal:
         return float(row["total"])
 
     def daily_pnl(self) -> float:
-        start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         return self.realised_pnl_since(start)
 
     def weekly_pnl(self) -> float:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
         return self.realised_pnl_since(start)
 
@@ -118,7 +117,7 @@ class TradeJournal:
 
     def daily_history(self, days: int = 120) -> list[dict]:
         """Realised P&L grouped by calendar day (for the calendar heatmap)."""
-        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
         rows = self._conn.execute(
             "SELECT substr(closed_at,1,10) AS d, SUM(pnl) AS pnl, COUNT(*) AS n "
             "FROM trades WHERE closed_at >= ? GROUP BY d ORDER BY d",

@@ -8,7 +8,7 @@ public ``snapshot()`` returns a plain, JSON-serialisable dict.
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from apex.logging_setup import recent_logs
@@ -32,7 +32,7 @@ class SharedState:
         self.breakers: dict[str, bool] = {}      # name -> tripped?
         self.prop: dict[str, Any] = {}           # prop-firm guard telemetry
         self.broker_error: str = ""              # last broker-connection error (shown in UI)
-        self.last_heartbeat: datetime = datetime.now(timezone.utc)
+        self.last_heartbeat: datetime = datetime.now(UTC)
         self.api_calls: dict[str, int] = {"ig": 0, "claude": 0}
         self.portfolio_health: int = 100
         self.ai_enabled: bool = True
@@ -47,7 +47,7 @@ class SharedState:
         with self._lock:
             for key, value in fields.items():
                 setattr(self, key, value)
-            self.last_heartbeat = datetime.now(timezone.utc)
+            self.last_heartbeat = datetime.now(UTC)
 
     def bump_api(self, name: str, n: int = 1) -> None:
         with self._lock:
@@ -90,7 +90,7 @@ class SharedState:
                 "daily_history": self.daily_history,
                 "last_heartbeat": self.last_heartbeat.isoformat(),
                 "logs": recent_logs(50),
-                "server_time": datetime.now(timezone.utc).isoformat(),
+                "server_time": datetime.now(UTC).isoformat(),
             }
 
     @staticmethod

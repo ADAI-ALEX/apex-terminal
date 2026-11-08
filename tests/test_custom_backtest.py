@@ -4,7 +4,7 @@ store, the sandboxed custom runner, and the engine's custom-signal path."""
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -19,7 +19,7 @@ from apex.strategies import store
 # ── candle helper ──────────────────────────────────────────────────────────
 def _candles(n: int = 200, start: float = 5000.0) -> list[Candle]:
     out: list[Candle] = []
-    base = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    base = datetime(2020, 1, 1, tzinfo=UTC)
     price = start
     for i in range(n):
         price += math.sin(i / 10.0) * 8.0 + (4.0 if i % 2 == 0 else -3.0)

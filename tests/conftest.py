@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -33,7 +33,7 @@ def _isolated_config(tmp_path, monkeypatch):
 def make_candles(closes: Sequence[float], spread: float = 0.5) -> list[Candle]:
     """Build a candle series from a list of closes (synthetic OHLC around close)."""
     out: list[Candle] = []
-    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    base = datetime(2026, 1, 1, tzinfo=UTC)
     prev = closes[0]
     for i, c in enumerate(closes):
         hi = max(prev, c) + spread

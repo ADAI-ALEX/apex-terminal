@@ -15,12 +15,12 @@ from __future__ import annotations
 
 import math
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from loguru import logger
 
-from apex.config import Direction, Market, Settings, get_settings
+from apex.config import Direction, Settings, get_settings
 from apex.models import AccountSnapshot, Candle, Position, Signal, TradeRecord
 
 # Map our candle minutes → IG resolution strings.
@@ -246,7 +246,7 @@ class PaperBroker:
         vol = base * 0.0015  # ~0.15% per-candle volatility
         rng = random.Random(hash((epic, count)) & 0xFFFF)
         price = base
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         out: list[Candle] = []
         for i in range(count):
             drift = math.sin(i / 18.0) * vol * 0.6  # gentle cyclic trend

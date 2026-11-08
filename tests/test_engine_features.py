@@ -5,7 +5,7 @@ costs, and snippet-controlled stop/target overrides."""
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from apex.backtest.custom_runner import CompiledStrategy, validate_code
 from apex.backtest.engine import (
@@ -20,7 +20,7 @@ from apex.models import Candle
 
 def _candles(n: int = 300, start: float = 5000.0) -> list[Candle]:
     out: list[Candle] = []
-    base = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    base = datetime(2020, 1, 1, tzinfo=UTC)
     price = start
     for i in range(n):
         price += math.sin(i / 8.0) * 6.0 + (3.0 if i % 2 else -2.0)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from apex.backtest import run_backtest
 from apex.config import MARKETS
@@ -13,7 +13,7 @@ from apex.models import Candle
 def _trending_candles(n: int = 300) -> list[Candle]:
     """A noisy uptrend so strategies actually fire."""
     out: list[Candle] = []
-    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    base = datetime(2026, 1, 1, tzinfo=UTC)
     price = 5000.0
     for i in range(n):
         drift = math.sin(i / 25.0) * 6.0

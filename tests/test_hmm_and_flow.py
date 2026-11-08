@@ -7,7 +7,7 @@ backtest engine, and the macro overlay columns in the crypto seeds.
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -26,7 +26,7 @@ from apex.models import Candle
 
 def _candles(closes: list[float], start: datetime | None = None,
              minutes: int = 15) -> list[Candle]:
-    t0 = start or datetime(2024, 1, 1, tzinfo=timezone.utc)
+    t0 = start or datetime(2024, 1, 1, tzinfo=UTC)
     out = []
     for i, c in enumerate(closes):
         prev = closes[i - 1] if i else c
@@ -151,6 +151,6 @@ def test_btc_240m_seed_carries_macro_and_delta() -> None:
     assert any(v != 0.0 for v in s.exo["macro"][4_000:4_500])
     assert any(v != 0.0 for v in s.exo["macro_slow"][4_000:4_500])
     # 4H bars must be strictly increasing on 4-hour UTC boundaries
-    for prev, cur in zip(s.candles[1000:1010], s.candles[1001:1011]):
+    for prev, cur in zip(s.candles[1000:1010], s.candles[1001:1011], strict=False):
         assert (cur.time - prev.time).total_seconds() == 4 * 3600
         assert cur.time.hour % 4 == 0

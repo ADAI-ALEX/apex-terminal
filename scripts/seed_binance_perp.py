@@ -20,7 +20,7 @@ import io
 import sys
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
@@ -79,7 +79,7 @@ def _fetch(symbol: str, tf: str, month: str) -> Path | None:
 
 
 def _rows_from_zip(path: Path) -> list[tuple[int, float, float, float, float, float, float]]:
-    """Parse one kline zip -> [(open_ms, o, h, l, c, base_vol, taker_buy_base)]."""
+    """Parse one kline zip -> [(open_ms, o, h, low, c, base_vol, taker_buy_base)]."""
     out = []
     with zipfile.ZipFile(path) as zf:
         with zf.open(zf.namelist()[0]) as fh:
@@ -125,7 +125,7 @@ def seed(symbol: str, key: str, tf: str, first_month: str) -> None:
     # Live engines reproduce it from daily candles; 0.0 until 50 days exist.
     day_last: dict = {}
     for ts, _o, _h, _l, c, _v, _tb in dedup:
-        day_last[datetime.fromtimestamp(ts / 1000.0, tz=timezone.utc).date()] = c
+        day_last[datetime.fromtimestamp(ts / 1000.0, tz=UTC).date()] = c
 
     out = DATA_DIR / f"{key}_{TF_SUFFIX[tf]}.csv"
     if out.exists():
@@ -139,8 +139,8 @@ def seed(symbol: str, key: str, tf: str, first_month: str) -> None:
                     "macro", "macro_slow"])
         seen_days: list[float] = []
         cur_day = None
-        for ts, o, h, l, c, vol, taker_buy in dedup:
-            dt = datetime.fromtimestamp(ts / 1000.0, tz=timezone.utc)
+        for ts, o, h, low, c, vol, taker_buy in dedup:
+            dt = datetime.fromtimestamp(ts / 1000.0, tz=UTC)
             d = dt.date()
             if cur_day is None:
                 cur_day = d
@@ -155,11 +155,11 @@ def seed(symbol: str, key: str, tf: str, first_month: str) -> None:
                 sma200 = sum(seen_days[-200:]) / 200.0
                 macro_slow = round(100.0 * (c / sma200 - 1.0), 3)
             delta = 2.0 * taker_buy - vol     # taker buys minus taker sells
-            w.writerow([dt.strftime("%Y-%m-%dT%H:%M:%S"), o, h, l, c,
+            w.writerow([dt.strftime("%Y-%m-%dT%H:%M:%S"), o, h, low, c,
                         round(vol, 3), round(delta, 3), macro, macro_slow])
     print(f"  wrote {out.name}: {len(dedup)} bars "
-          f"({datetime.fromtimestamp(dedup[0][0]/1000, tz=timezone.utc):%Y-%m-%d} .. "
-          f"{datetime.fromtimestamp(dedup[-1][0]/1000, tz=timezone.utc):%Y-%m-%d})")
+          f"({datetime.fromtimestamp(dedup[0][0]/1000, tz=UTC):%Y-%m-%d} .. "
+          f"{datetime.fromtimestamp(dedup[-1][0]/1000, tz=UTC):%Y-%m-%d})")
 
 
 if __name__ == "__main__":

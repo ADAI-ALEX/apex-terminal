@@ -10,7 +10,7 @@ account nears the max-loss line.
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from apex.backtest.custom_runner import CompiledStrategy, _Indicators
 from apex.models import Candle
@@ -22,7 +22,7 @@ def _bar(t: datetime, o: float, h: float, lo: float, c: float, v: float) -> Cand
 
 
 def _base_time() -> datetime:
-    return datetime(2024, 1, 1, tzinfo=timezone.utc)
+    return datetime(2024, 1, 1, tzinfo=UTC)
 
 
 # ── volume_profile ───────────────────────────────────────────────────────────
@@ -227,12 +227,12 @@ def test_runner_bars_since_scale_kwarg():
 
 def test_opening_range_and_prev_day_primitives():
     """opening_range() and prev_day_range() read today's OR and the prior session."""
-    t0 = datetime(2024, 3, 11, 13, 30, tzinfo=timezone.utc)
+    t0 = datetime(2024, 3, 11, 13, 30, tzinfo=UTC)
     cs = []
     # Day 1: 13:30-15:00 bars, then Day 2 a few bars.
     for k in range(8):
         cs.append(_bar(t0 + timedelta(minutes=15 * k), 100 + k, 101 + k, 99 + k, 100.5 + k, 1000.0))
-    d2 = datetime(2024, 3, 12, 13, 30, tzinfo=timezone.utc)
+    d2 = datetime(2024, 3, 12, 13, 30, tzinfo=UTC)
     for k in range(6):
         cs.append(_bar(d2 + timedelta(minutes=15 * k), 110 + k, 111 + k, 109 + k, 110.5 + k, 1000.0))
     ctx = _Indicators(cs)

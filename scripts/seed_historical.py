@@ -36,7 +36,7 @@ import argparse
 import csv
 import math
 import random
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 try:  # requests is already a project dependency; degrade gracefully if absent
@@ -178,7 +178,7 @@ def _yahoo_daily(symbol: str) -> list[tuple[date, float, float, float, float, fl
             o, h, lo, c = q["open"][i], q["high"][i], q["low"][i], q["close"][i]
             if None in (o, h, lo, c):
                 continue
-            d = datetime.fromtimestamp(t, tz=timezone.utc).date()
+            d = datetime.fromtimestamp(t, tz=UTC).date()
             rows.append((d, float(o), float(h), float(lo), float(c), float(vol[i] or 0)))
         return rows
     except Exception as exc:  # noqa: BLE001 - seed is best-effort
@@ -240,7 +240,7 @@ def _yahoo_intraday(symbol: str, interval: str, rng: str) -> list[tuple[datetime
             o, h, lo, c = q["open"][i], q["high"][i], q["low"][i], q["close"][i]
             if None in (o, h, lo, c):
                 continue
-            dt = datetime.fromtimestamp(t, tz=timezone.utc)
+            dt = datetime.fromtimestamp(t, tz=UTC)
             rows.append((dt, float(o), float(h), float(lo), float(c), float(vol[i] or 0)))
         return rows
     except Exception as exc:  # noqa: BLE001

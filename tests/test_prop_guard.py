@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from apex.config import PropFirmParams
 from apex.risk.prop_guard import PropAction, PropGuard
@@ -20,7 +20,7 @@ def _params() -> PropFirmParams:
     )
 
 
-_T0 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+_T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 
 
 def test_baseline_then_ok():
